@@ -62,16 +62,6 @@ jobs:
         # this they would report green having checked nothing.
         run: xvfb-run -a python -m pytest tests -v
 
-      - name: Verify the budget terms against reference data
-        env:
-          MPLBACKEND: Agg
-        run: python code_verification/verify_budget_terms.py
-
-      - name: Verify the two-point correlation against analytic cases
-        env:
-          MPLBACKEND: Agg
-        run: python code_verification/verify_two_point_correlation.py
-
       - name: Check every module imports without a display
         env:
           MPLBACKEND: Agg

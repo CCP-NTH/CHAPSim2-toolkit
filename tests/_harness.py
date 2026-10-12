@@ -25,7 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 __all__ = ['skip', 'Skip', 'SKIP_EXCEPTIONS', 'solver_tests_dir',
            'build_cartesian_case', 'build_cylindrical_case',
-           'write_monitor_files', 'require_gui', 'gui_root', 'gui_app']
+           'write_monitor_files', 'write_bin', 'attribute_xml', 'write_xdmf',
+           'require_gui', 'gui_root', 'gui_app']
 
 
 class Skip(Exception):
@@ -471,3 +472,49 @@ def gui_app():
     finally:
         app._on_close()
         _reset_tk_globals()
+
+
+# ── synthetic XDMF/visu cases ──────────────────────────────────────────
+def write_bin(path, array, header_bytes=0):
+    with open(path, 'wb') as f:
+        if header_bytes:
+            f.write(b'\x00' * header_bytes)
+        np.asarray(array, dtype=np.float64).tofile(f)
+
+
+def attribute_xml(name, bin_name, dims):
+    return f"""      <Attribute Name="{name}" AttributeType="Scalar" Center="Cell">
+        <DataItem ItemType="Uniform"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Dimensions="{dims[0]} {dims[1]} {dims[2]}">
+          ../data/{bin_name}
+        </DataItem>
+      </Attribute>"""
+
+
+def write_xdmf(path, grid_name, nodes, attributes):
+    nz1, ny1, nx1 = nodes
+    geometry = ''.join(f"""        <DataItem ItemType="Uniform"
+                 Dimensions="{n}"
+                 NumberType="Float"
+                 Precision="8"
+                 Format="Binary"
+                 Seek="4">
+          ../mesh/domain1_grid_{axis}.bin
+        </DataItem>
+""" for axis, n in (('x', nx1), ('y', ny1), ('z', nz1)))
+
+    path.write_text(f"""<?xml version="1.0" ?>
+<Xdmf Version="3.0">
+ <Domain>
+   <Grid Name="{grid_name}" GridType="Uniform">
+     <Topology TopologyType="3DRectMesh" Dimensions=" {nz1} {ny1} {nx1}"/>
+     <Geometry GeometryType="VXVYVZ">
+{geometry}      </Geometry>
+{chr(10).join(attributes)}
+   </Grid>
+ </Domain>
+</Xdmf>
+""")

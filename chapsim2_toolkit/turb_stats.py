@@ -2170,7 +2170,7 @@ class SpectrumComputer:
     shared data_loader.
 
     E is the energy per Fourier mode (see op.compute_1d_spectrum), the
-    convention of the Vreman & Kuerten spectra in code_verification. As
+    convention of the Vreman & Kuerten spectra in the Chan180 reference data. As
     there, k = 0 and the Nyquist mode are dropped: qx_ccc is interpolated to
     cell centres in x, which zeroes the x-direction Nyquist mode.
 

@@ -11,10 +11,10 @@ ASCII output directly and produces:
 - **turbulence statistics**: mean velocity and temperature, Reynolds
   stresses and their budgets, TKE, vorticity, anisotropy (Lumley triangles),
   1D energy spectra, two-point correlations, wall shear, Nusselt and
-  turbulent Prandtl numbers, and MHD current density and Lorentz force;
+  turbulent Prandtl numbers, MHD statistics such as current density and Lorentz force.
 - **visualisation**: 2D slices of any field, and 3D slices, isosurfaces and
-  volume rendering;
-- **run monitoring**: bulk and probe-point histories;
+  volume rendering.
+- **run monitoring**: bulk and probe-point histories.
 - **pre-run mesh analysis**: checks a mesh against DNS resolution limits
   before the job is submitted.
 
@@ -94,17 +94,7 @@ chapsim2-turbstats --config config.py
 python -m chapsim2_toolkit.turb_stats --config config.py
 ```
 
-From a clone with nothing installed, the top-level scripts are thin wrappers
-onto the package, so the old commands still work:
-
-```bash
-python gui.py
-python /path/to/CHAPSim2-toolkit/turb_stats.py     # from your data directory
-```
-
-Use `python -m chapsim2_toolkit.<script>` where you can. It puts your working
-directory first on `sys.path`, which is how it finds the `config.py` sitting
-beside your data.
+Use `python -m chapsim2_toolkit.<script>` for running scripts separately (if installed).
 
 ## Tools
 
@@ -116,9 +106,8 @@ beside your data.
 | Slices | `chapsim2-slice` | 2D maps of any output field |
 | Monitors | `chapsim2-monitor` | Bulk and probe-point histories |
 | Mesh analysis | `chapsim2-mesh` | Resolution check of an `input_chapsim.ini` |
-| 3D visualisation | `python turb_visu.py` | Slices, isosurfaces and volume rendering (PyVista) |
-| Thermal boundary conditions | `python thermal_BC_calc.py` | Grashof number to wall ΔT or heat flux; fluid property tables |
-| Domain stitching | `python stitch_domains.py` | Joins two domains along x (not recommended) |
+| 3D visualisation | `python -m chapsim2_toolkit.turb_visu` | Slices, isosurfaces and volume rendering (PyVista) |
+| Thermal boundary conditions | `python -m chapsim2_toolkit.thermal_BC_calc` | Grashof number to wall ΔT or heat flux; fluid property tables |
 
 **gui.py** covers turbulence statistics, slice visualisation, monitoring
 points, 3D visualisation and mesh analysis. Choose a case once in the Case
@@ -130,7 +119,7 @@ interactive: load an `input_chapsim.ini` (or start from the built-in
 template), adjust cell counts, stretching and flow parameters with sliders,
 and the resolution report, headline metrics and spacing plot update live.
 The adjusted settings can be written back out as an input file. The GUI is
-unlikely to work on an HPC system; use the individual scripts there.
+unlikely to work on an HPC system, use the individual scripts there.
 
 **turb_stats.py** is the main post-processing script. It produces velocity,
 temperature and Reynolds stress profiles, Reynolds stress budget terms, and
@@ -192,12 +181,10 @@ The toolkit targets the current CHAPSim2 output layout:
 ```
 
 Point any script at the case folder (`2_visu` or `2_visu/xdmf` are also
-accepted) and it finds the rest. Older runs that kept everything flat in
-`2_visu/`, with the binaries in `1_data/`, still load, but they are not the
-target.
+accepted) and it finds the rest. Legacy segregated 2_visu and 1_data is supported.
 
-Time-and-space averaged (`tsp_avg`) statistics come in one of two shapes,
-depending on how many directions are periodic. Both are read transparently:
+Time-and-space averaged (`tsp_avg`) statistics come in one of two formats,
+depending on how many directions are periodic:
 
 - **one periodic direction** (e.g. a spatially developing channel): a 2D
   plane, `2_visu/xdmf/domain1_tsp_avg_flow_zi1_<iter>.xdmf`, tagged with the
@@ -220,10 +207,8 @@ the axes labelled accordingly, not as a disc.
 
 ## Run parameters come from the case
 
-A case's `input_chapsim.ini` is the solver's own record of how the run was
-set up, so the toolkit reads it instead of asking for the same numbers
-again. On loading a case, in the GUI or through `config.py`, these are
-filled in:
+A case's `input_chapsim.ini` can be directly used. On loading a case, in the GUI 
+or through `config.py`, these are filled in:
 
 | Parameter | From |
 |---|---|
@@ -236,28 +221,7 @@ filled in:
 | Stuart number | `[mhd] NStuart`, or Ha²/Re from `NHartmn` |
 | which directions may safely be averaged | `[bc] ifbc*` |
 
-In `config.py` these are the settings left as `None`. Setting one overrides
-the case and prints a warning saying the two disagree, because that is
-usually a slip rather than an intention. A Reynolds number transcribed
-wrongly rescales every u_τ-normalised profile, with nothing on the plot to
-show for it.
-
-The bulk velocity and the wall heat flux are outcomes of a run rather than
-inputs to it, so they are not in the input file and are still given by hand.
-
-The Nusselt number evaluates the conductivity at the bulk temperature, which
-varies along a heated duct, not at the reference temperature. For
-supercritical water that is the difference between a right answer and one up
-to 77% out, since `k` falls by a factor of five through the pseudo-critical
-region.
-
-Loading a case also checks that the data is the data the input file
-describes. It rebuilds the mesh from `ncx/ncy/ncz`, `istret` and `rstret`
-and compares it with the grid the solver wrote. An input file edited after
-the run, or output copied in from a different case, would otherwise go
-unnoticed and silently rescale every profile. A changed clustering is the
-case that matters: the cell count still matches, so only the node positions
-reveal it.
+In `config.py` these are the settings left as `None`.
 
 ## Fluid properties
 
@@ -277,35 +241,22 @@ These are verified against the solver. Every coefficient is compared with
 `modules.f90` by parsing it, and supercritical water is checked against the
 `4_check/check_ftplist_dim.dat` property list the solver itself writes.
 
-Everything is SI, with no exceptions: K, kg/m³, Pa·s, W/(m·K), J/(kg·K),
+Everything is SI,: K, kg/m³, Pa·s, W/(m·K), J/(kg·K),
 J/kg, 1/K and Pa. The NIST files give pressure in MPa and the solver keeps
-it that way, so it is converted once on reading and nothing downstream has to
-remember which. Enthalpy can be inverted too: `temperature_from_enthalpy` is
-a port of the solver's `ftp_refresh_thermal_properties_from_H`, which is how
-a bulk temperature is recovered from the bulk enthalpy in the data.
-
-Enthalpy coefficients are derived from the heat-capacity ones rather than
-transcribed, as the solver now does, so that `dH/dT = Cp` holds exactly. This
-is checked numerically for every fluid.
-
-The valid temperature range is the melting-to-boiling range intersected with
-the validity range of each correlation that has one, and the toolkit records
-which property sets each end. A fit does not hold over the whole liquid range
-merely because the material is liquid there: PbLi-17 is valid from 521 to
-625 K, both ends set by its viscosity correlation, against a phase range of
-508 to 1943 K.
-
-Where the solver would stop the run, at a temperature outside that range,
-the toolkit returns NaN instead, so one bad cell leaves a gap rather than
-costing the whole figure.
+it that way, so it is converted once on reading. Enthalpy can be inverted 
+too: `temperature_from_enthalpy` is a port of the solver's 
+`ftp_refresh_thermal_properties_from_H`. Bulk temperature for statistics 
+such as wall heat transfer coeff. and Nusselt number is calculated as a 
+mass-flux weighted average. Enthalpy coefficients are derived from the 
+heat-capacity. The valid temperature range is either the melting-to-boiling 
+range or the validity range of each correlation.
 
 ## Figure provenance
 
 Every figure the toolkit saves records what made it, in the file's own
-metadata: the toolkit version, the git revision and whether the working tree
-was dirty, the cases and timesteps, the `config.py` used, and the time. PNG
-files carry it in tEXt chunks and PDF files in the document info dictionary,
-so nothing is drawn on the plot and nothing can be separated from it.
+metadata: the toolkit version, the git revision, the cases and timesteps, 
+the `config.py` used, and the time. PNG files carry it in text chunks and 
+PDF files in the document info dictionary.
 
 ```bash
 python -m chapsim2_toolkit.provenance figure.png
@@ -320,8 +271,7 @@ figure.png:
   toolkit          CHAPSim2-toolkit 0.2.0 (85592c6-dirty)
 ```
 
-`git_dirty` is the field that matters. A commit does not describe the code
-that ran if the tree was modified, so a figure marked dirty cannot be
+`git_dirty` describes if the tree was modified, a figure marked dirty cannot be
 regenerated from that revision alone.
 
 ## Testing
@@ -332,28 +282,18 @@ python run_tests.py test_xdmf       # one module
 python run_tests.py -k cylindrical  # tests matching a name
 ```
 
-The runner uses pytest when it is installed and falls back to a built-in
-runner when it is not, so the suite also runs on a cluster where installing
-packages is awkward. GitHub Actions runs the same commands on every push and
-pull request, on the oldest and newest Python versions the package supports.
-
-Most tests build small synthetic cases on disk in the formats CHAPSim2
+The runner uses pytest or falls back to a built-in runner for testing on a 
+cluster. Most tests build small synthetic cases on disk in the formats CHAPSim2
 writes, so nothing binary lives in the repository and the expected values
 are analytic. `tests/test_solver_cases.py` additionally reads CHAPSim2's own
-regression output, covering every case and every averaging tier, which is
-what catches the solver's formats changing. Those tests skip themselves when
+regression output for format changes. Those tests skip themselves when
 the solver is not checked out alongside; set `CHAPSIM2_TESTS` to point at its
 `tests/` directory.
 
-`tests/test_gui.py` builds a real widget tree and drives it: applying a case
-to every tab, the values each tab takes from the case's `input_chapsim.ini`,
-the timestep scans, the `config.py` round trip and the Help topics. Plotting
-is not tested. These tests need `ttkbootstrap` and a display, and skip
-without either. Run them with `xvfb-run -a python run_tests.py test_gui` on a
+`tests/test_gui.py` builds a real widget tree. Plotting is not tested. 
+These tests need `ttkbootstrap` and a display, and skip without either. 
+Run them with `xvfb-run -a python run_tests.py test_gui` on a
 headless machine, which is what CI does.
-
-`code_verification/` holds standalone checks of the budget terms, spectra
-and two-point correlations against analytic cases.
 
 ## Changes
 

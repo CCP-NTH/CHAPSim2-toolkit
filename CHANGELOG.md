@@ -15,7 +15,7 @@ with the caveat that the toolkit is pre-1.0 and the API may still move.
 - **1D energy spectrum of u′** (from upstream): a z spectrum at chosen x
   stations, or an x spectrum averaged over z; averaged over snapshots for
   timestep `avg`; optional k^-5/3 reference line. Checked against analytic
-  cases by `code_verification/verify_spectrum.py`.
+  cases by `tests/test_spectrum.py`.
 
 ### Fixed
 
