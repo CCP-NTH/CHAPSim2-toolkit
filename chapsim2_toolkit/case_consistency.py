@@ -1,16 +1,4 @@
-"""Check that a case's data is the data its input file describes.
-
-Every number the post-processing scales by - the Reynolds number, the
-reference temperature and length, the fluid, the mesh - is read from
-``input_chapsim.ini``. That is only correct if the file still describes
-the run whose output sits beside it. An input file edited after the run,
-output copied in from a different case, or a restart continued with a
-changed mesh all produce a folder where the two disagree, and nothing
-downstream would notice: the profiles would simply be scaled wrongly.
-
-So the input file is checked against the grid the solver actually wrote,
-which is the one thing in the output that the input file fully
-determines. Three comparisons:
+"""Check that a case's data is the data its input file describes:
 
 * cell counts, ncx/ncy/ncz against the grid dimensions in the output;
 * domain extents, after the case geometry defaults the solver applies;
@@ -18,8 +6,7 @@ determines. Three comparisons:
   point by point - this is the one that catches a changed stretching,
   which leaves the cell count identical and every profile subtly wrong.
 
-A mismatch is reported, not raised. The user may have a good reason, and
-losing the figure helps nobody; what matters is that it is said.
+A mismatch is reported, but not raised.
 """
 
 import os

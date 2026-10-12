@@ -35,10 +35,7 @@ it is converted on read, so nothing downstream has to remember which.
 The solver non-dimensionalises by its reference state afterwards; that is
 a separate step and is not done here.
 
-Outside a fluid's valid range the solver stops with "temperature exceeds
-specified range". Stopping is not useful in post-processing - a single
-bad cell would lose the whole plot - so the equivalent check here returns
-NaN for the offending points and the caller can see them as gaps.
+Temperature outside a fluid's valid range returns NaN for the offending points.
 """
 
 import os
@@ -92,11 +89,9 @@ _WARNED = set()
 # sodium CoH in modules.f90 was LBE's until October 2026.
 #
 # The interval a fluid's properties are evaluated over is the melting-to-
-# boiling phase range intersected with the validity range of each
-# correlation that has one. A fit does not hold over the whole liquid
-# range merely because the material is liquid there. Where a correlation
-# narrows the interval, the property that did so is recorded, so a
-# temperature out of range can say which fit it fell off.
+# boiling phase range or the validity range of each
+# correlation that has one. Where a correlation
+# narrows the interval, the property that did so is recorded.
 
 #: Molar gas constant, J/(mol K), as modules.f90 states it.
 RU_GAS = 8.314
@@ -165,16 +160,7 @@ _COEFFICIENTS = {
         CoCp=[0.0, 0.0, 195.0, -9.116e-3, 0.0],
         # M = CoM[0] + CoM[1]*T + CoM[2]*T^2 + CoM[3]*T^3
         # Schulz (1991), M = 1.87e-4 exp(EA / (Ru T)) with EA = 11640
-        # J/mol. This replaced a cubic from Martelli, Venturini & Utili
-        # (2019) that crossed zero at 858.996 K and went negative inside
-        # the range its own source states - not a fit to range-limit, a
-        # fit not to use.
-        #
-        # The sources disagree on where Schulz holds: the INL MOOSE
-        # implementation restricts it to melting point - 625 K, a liquid
-        # breeder compilation quoting the same expression says 521 - 900 K.
-        # The solver takes their overlap, which is policy adopted because
-        # the sources disagree rather than an established interval.
+        # J/mol.
         limits={'dynamic viscosity (Schulz 1991)': (521.0, 625.0)},
         CoM=[11640.0 / RU_GAS, 1.87e-4, 0.0], m_form='arrhenius',
     ),
@@ -327,11 +313,8 @@ class _Properties:
         """NaN where a correlation returns a value that cannot be real.
 
         Some of the solver's fits are extrapolated past where they hold:
-        the PbLi-17 viscosity cubic goes negative above about 859 K, which
-        is inside the range the solver treats as valid. A negative
-        viscosity is not a number to carry into a Reynolds or Prandtl
-        number, so it becomes a NaN and a warning once per fluid and
-        quantity.
+        the PbLi-17 viscosity cubic goes negative above about 859 K 
+        so it becomes a NaN and a warning once per fluid and quantity.
         """
         values = self._masked(T, values)
         bad = np.asarray(values) <= 0.0
@@ -475,9 +458,7 @@ class TableProperties(_Properties):
     """Supercritical water or CO2, from a NIST table (IPROPERTY_TABLE).
 
     The solver reads the table, sorts it by temperature and interpolates
-    linearly between the two bracketing rows. Linear is not an
-    approximation chosen here - it is what the run did, and near the
-    pseudo-critical peak the choice of interpolation visibly changes Cp.
+    linearly between the two bracketing rows.
     """
 
     #: Column order of the .DAT files, from buildup_property_relations_from_table.
@@ -539,12 +520,6 @@ class TableProperties(_Properties):
 def find_property_table(filename, case_dir=None):
     """Locate a NIST table: the case's own copy first, then the bundled one.
 
-    The solver opens the table by bare filename from its working
-    directory, so the authoritative copy for a run is the one sitting in
-    that case folder. Every case in CHAPSim2's test suite carries one, and
-    they are identical to the bundled copy today - but a case run against
-    a different table should be post-processed against that table, not
-    against ours.
     """
     candidates = []
     if case_dir:

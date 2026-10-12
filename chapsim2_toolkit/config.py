@@ -13,9 +13,6 @@
 # file is the solver's own record of how the run was set up, so it is the one
 # place these belong. Set a value here only to override the case, and the
 # toolkit will say so if the two disagree.
-#
-# The bulk velocity and the wall heat flux are outcomes of a run rather than
-# inputs to it, so they are not in the input file and are given below.
 
 # Define input cases ==================================================================================================================================
 

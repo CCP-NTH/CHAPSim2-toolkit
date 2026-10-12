@@ -1,9 +1,5 @@
 """Text shown by the toolkit's Help tab.
 
-Kept apart from gui.py so the wording can be edited without going near the
-widget code. Each entry is (topic title, body); the Help tab lists the titles
-and shows one body at a time.
-
 Keep the bodies plain text at <= 78 columns: they are rendered in a fixed
 pitch font, unwrapped, so the reader can rely on the alignment.
 """
@@ -50,8 +46,8 @@ The five working tabs
   Turbulence Statistics   profiles, Reynolds stresses, budgets,
                           spectra, two-point correlations
 
-Everything here is also available as standalone scripts for machines with
-no display - see README.md. The scripts and the GUI share the same reader
+Everything here is also available as standalone scripts for HPC applications 
+- see README.md. The scripts and the GUI share the same reader
 and the same plotting code, so they produce the same numbers.
 """.format(version=VERSION)
 
@@ -70,16 +66,12 @@ The line underneath summarises what was found:
 
     pipe_scp_inout_qw | timesteps: 0, 20, 40, 60 | input_chapsim.ini
 
-Read it before going further. If it says "no visualisation output", or the
-timestep you want is missing, the path is wrong or the run has not written
-that data yet - better to find out here than after a long load.
+If it says "no visualisation output", or the timestep you want is missing, 
+the path is wrong or data is otherwise unavailable. Choosing a case sets up 
+all the tabs at once. Every tab still has its own path field, so one can be 
+pointed at a different case if you want to compare.
 
-Choosing a case sets up all the tabs at once: each one needs the case in a
-slightly different form and works that out for itself. Every tab still has
-its own path field, so one can be pointed at a different case if you want
-to compare.
-
-2. Pick a tab and work
+2. Pick a tab
 ----------------------
 Each tab has its controls on the left and its output on the right, with a
 strip of headline numbers above the figure. The tab-by-tab topics in this
@@ -90,8 +82,7 @@ list cover the details.
 The narrow strip on the right edge is the console; the dot appears when
 there is new output. Click the arrow to open it. Everything the tools
 print goes there - what was loaded, what was skipped and why, and the full
-traceback if something fails. It is the first place to look when a result
-is not what you expected.
+traceback if something fails.
 
 Where figures go
 ----------------
@@ -99,8 +90,7 @@ Slice and 3D save on request, through their own Save buttons.
 
 Turbulence Statistics writes every figure it produces. By default they go
 to turb_stats_plots/ beside the toolkit; set an Output directory in the
-Output section to send them elsewhere. It does not write into your case
-folders.
+Output section to send them elsewhere or save using the figure canvas.
 """
 
 
@@ -124,15 +114,12 @@ Point the Case bar at <case>. Any of the subdirectories also work.
 
 What the data types mean
 ------------------------
-  inst       one instantaneous snapshot
-  t_avg      averaged in time, still 3-D
-  tsp_avg    averaged in time and over the periodic directions
-  2d_slice   a pre-written plane, far cheaper to read than a full field
+  inst       one instantaneous snapshot, 3D
+  t_avg      averaged in time, 3D
+  tsp_avg    averaged in time and over periodic directions, 1D or 2D
+  2d_slice   a pre-written plane, can be instantaneous or time averaged
 
-A case does not carry all of them. Statistics only start once the solver
-reaches stat_istart, thermo is often written less often than flow, and a
-run with no averaging has no t_avg at all. The Slice and 3D tabs report
-what each group holds when they scan, and start you on a type that exists.
+The Slice and 3D tabs report what variables each group holds.
 
 Time-and-space averages come in two shapes, depending on the case:
 
@@ -161,13 +148,9 @@ spacings reported are the ones the solver will use.
 
 Using it
 --------
-Choosing a case loads its input_chapsim.ini automatically. Otherwise use
-Browse and Load.
-
-Then change anything - cell counts, clustering, stretch factor, Reynolds
-number, time step - and the report, the headline numbers and both plots
-update as you drag. Generate... writes the adjusted settings back out as
-an input file the solver will accept.
+Choosing a case loads its input_chapsim.ini automatically. Otherwise an 
+empty template is the default and can generate an input file after adjusting 
+mesh properties according to requirements.
 
 Reading the headline strip
 --------------------------
@@ -179,8 +162,8 @@ Reading the headline strip
   diff. number   diffusion number for the chosen time step
   total cells    the size of the job you are about to submit
 
-Values are coloured against those limits. The report below spells out
-each one and says what to change.
+Values are coloured against those limits. Please note these are advisory, a 
+full mesh convergence study is advised.
 
 Notes
 -----
@@ -201,7 +184,7 @@ Monitoring Points
 
 Plots what the solver recorded as it ran: probe points and the bulk and
 mass-conservation histories. This is how you check a run is healthy and
-has settled before spending time on statistics.
+has converged to a statistically steady state.
 
 Using it
 --------
@@ -227,14 +210,13 @@ Figures
 
 Columns are read from each file's own header rather than by position, so
 a monitor file that gains or loses a column still plots the right
-quantity. Panels whose columns a run did not write are dropped - an
-isothermal case simply gets a shorter figure.
+quantity.
 
 What to look for
 ----------------
-Mass conservation should sit at round-off. Bulk velocity should be steady
-under constant mass flux. Kinetic energy should plateau before you trust
-any statistics gathered over that period.
+Bulk quantities should be steady and mass conservation should be approximately 
+machine precision. Depending on the flow modelled, monitoring points should have 
+a stable running average.
 """
 
 
@@ -251,11 +233,11 @@ Steps
    then selects a type and timestep that exist.
 2. Check Data type, Physics and Timestep.
 3. Click "Load variables". The list fills.
-4. Select a variable in the list. Nothing plots until you do.
+4. Select a variable in the list.
 5. Set the Plane and Slice index - the coordinate for that index is shown
    beside it - and click Plot.
 
-Reading a pre-written plane is much cheaper than loading a full 3-D
+Reading a pre-written plane is much faster than loading a full 3-D
 field. Set Data type to 2d_slice and put a label such as yi24 in the
 Slice label box; the available labels are listed when the case is
 scanned. They are read straight out of the timestep's slice bundle.
@@ -287,7 +269,7 @@ _VISU3D = """\
 ================
 
 Interactive 3-D views through PyVista: slice planes, isosurfaces and
-volume rendering. Needs the pyvista package; the other tabs do not.
+volume rendering. Needs the pyvista package.
 
 Steps
 -----
@@ -296,9 +278,8 @@ Steps
 3. Drag to orbit, right-drag to pan, scroll to zoom. "Screenshot" writes
    the current view to a file.
 
-  Stride   read every nth cell. Start at 2 or 4 on a large grid: a full
-           DNS field can be hundreds of millions of cells and the
-           decimation happens at read time, not after loading it all.
+  Stride   read every nth cell. Start at 2 or 4 on a large grid of more than 
+  50 million points. 
 
 Statistics
 ----------
@@ -324,34 +305,18 @@ Steps
 1. Choose the case. The case folder names, the latest timestep and
    everything the run itself recorded are filled in - see "From the
    case file" below.
-2. Check the values that came in, and set the few the input file does
-   not record: the bulk velocity and the wall heat flux.
+2. Check the values and set those the input file does
+   not record: e.g the wall heat flux.
 3. Tick the statistics you want.
-4. Run. Figures appear in the selector above the plot.
+4. Run. Different figure types appear in the selector above the plot.
 
 From the case file
 ------------------
-A case's input_chapsim.ini is the one authoritative record of how it was
-run, so these are read from it rather than typed in again:
-
-  Reynolds number, reference temperature and reference length
-  Geometry (from icase), and whether heat transfer and MHD were on
-  Working fluid, gravity direction, magnetic field direction
-  Stuart number - taken from NStuart, or derived as Ha^2/Re from NHartmn
-  Which directions are periodic, which sets the safe averaging defaults
-
-Anything you change by hand is kept. The point of reading the case is
-that a Reynolds number transcribed wrongly rescales every u_tau
-normalised profile with nothing on the plot to show for it.
-
-The bulk velocity and the wall heat flux are outcomes of the run rather
-than inputs to it, so they are not in the input file and still have to be
-given here. A case with no input_chapsim.ini leaves every box as it is.
-
-Loading a case also checks that the output is the output this input file
-describes, by rebuilding the mesh from the cell counts and the stretching
-and comparing it with the grid the solver wrote. If they disagree the
-console says so - the usual cause is an input file edited after the run.
+If an input_chapsim.ini file is in the case directory, the toolkit will 
+auto-fill most fields in the post-processing configuration. Otherwise a 
+blank template is the default, configurations can be saved and re-loaded 
+as 'config.py' files using the 'save' and 'load' buttons. Loading a case 
+also checks that the output is the output against the input file loaded.
 
 Fluid properties
 ----------------
@@ -380,20 +345,17 @@ Input
 
 Averaging
 ---------
-Average over a direction only where the flow is periodic. Averaging the
-streamwise direction of a developing flow mixes the inlet with the
-outlet. For a case with an inlet and an outlet, leave x unaveraged and
-use the profile and slice coordinate boxes to pick stations.
+Average over a direction only where the flow is periodic. 
+For a case with an inlet and an outlet, leave the streamwise directon 
+unaveraged and use the profile and slice coordinate boxes to pick 
+stations.
 
 The headline strip
 ------------------
-  Re_bulk    what you entered
-  Re_tau     measured from the wall gradient of the loaded profile
+  Re_bulk    Specified bulk reference value
+  Re_tau     measured from the wall velocity gradient of the loaded profile
   u_tau      friction velocity
   tau_w      wall shear stress
-
-If Re_tau is far from what Mesh Analysis predicted, the run has probably
-not developed yet.
 
 Normalisation
 -------------
@@ -416,26 +378,10 @@ _TROUBLE = """\
 When something does not work
 ============================
 
-"Load variables" finds nothing
-------------------------------
-The data type does not exist for that timestep. The console names the
-missing file and lists what the group does have, for example:
-
-    No such file: domain1_t_avg_flow_60.xdmf
-    (this case has no t_avg flow; available: inst: 0, 20, 40, 60; tsp_avg: 60)
-
-Choosing the case again re-scans and selects something that exists.
-
 Plot does nothing
 -----------------
-No variable is selected. Click one in the Variables list; loading them
-does not select one.
-
-A physics group is missing at one timestep
-------------------------------------------
-Normal. Flow, thermo and MHD are written at their own frequencies, and
-statistics only start at stat_istart. Use a timestep the console lists
-for that group.
+Check if a variable is selected. Click one in the Variables list; 
+loading them does not select one.
 
 Re_tau looks far too small
 --------------------------
@@ -445,20 +391,14 @@ Points that the kinetic energy has plateaued.
 
 Nothing happens after Run
 -------------------------
-Open the console. Loading a large 3-D field takes time, and any error
-appears there with its traceback rather than in a dialog.
+Open the console. Loading a large 3-D field may take a few minutes, 
+and any error appears there with its traceback rather than in a dialog.
 
 A pipe cross-section is drawn as a rectangle
 --------------------------------------------
-Intended. The plane is (r, theta) - a radius against an angle - so it is
-drawn unrolled and labelled r and theta. Forcing it into a disc would
-require interpolating onto a Cartesian grid, which is not what the solver
-computed.
+This is the current implementation. The plane is (r, theta) - a radius 
+against an angle - so it is drawn unrolled and labelled r and theta.
 
-Figures appear in turb_stats_plots/
------------------------------------
-That is the default when no Output directory is set. The toolkit does not
-write into your case folders.
 """
 
 

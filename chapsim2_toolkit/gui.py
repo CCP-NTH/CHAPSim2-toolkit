@@ -16,9 +16,6 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
 
-# The same serif/Computer Modern setup the standalone scripts use, so a figure
-# produced in the GUI and the same figure produced by turb_stats.py or
-# monitor_points.py are not set in different typefaces.
 matplotlib.rcParams.update({
     'font.family': 'serif',
     'font.serif': ['Computer Modern Roman', 'CMU Serif', 'DejaVu Serif'],
@@ -29,18 +26,11 @@ matplotlib.rcParams.update({
     'path.simplify_threshold': 1.0,
 })
 
-#: Figures keep a light background whatever the window theme. A dark figure
-#: would look better in the app but is what most people then paste into a
-#: paper or a white-background slide, so it would have to be redone.
 FIGURE_FACECOLOR = 'white'
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Imported at module level rather than lazily like the other tools: it pulls in
-# nothing beyond numpy, and the mesh tab needs its constants while building its
-# widgets.
 from chapsim2_toolkit import mesh_analysis as ma
-
 
 # =====================================================================================
 # Shared utilities
@@ -103,9 +93,6 @@ def _plain_axes(axis_labels):
 class MetricStrip(ttk.Frame):
     """A row of headline numbers above a figure panel.
 
-    The Mesh Analysis tab puts the quantities a user actually checks first
-    where they can be read at a glance, instead of leaving two-thirds of the
-    window blank until a run finishes. This is that strip, reusable.
     """
 
     def __init__(self, parent, fields, **kwargs):
@@ -233,10 +220,6 @@ def _log_to(widget, msg, newline=True):
 
 class ConsolePanel(ttk.Frame):
     """Collapsible console docked to the right edge of the main window.
-
-    Collapsed (the default) it is just a slim vertical strip, so it costs
-    almost no space. Clicking the strip expands a scrollable log over the
-    right-hand side, which is typically empty anyway.
 
     The Text widget is created once and never destroyed, so a long-lived
     ``sys.stdout`` redirect stays valid across open/close cycles.
@@ -2400,9 +2383,6 @@ class Visu3DPanel(ttk.Frame):
             grid_pt = grid.cell_data_to_point_data()
             contours = grid_pt.contour(isosurfaces=iso_vals, scalars=variable)
             if contours.n_points > 0:
-                # cell_data_to_point_data/contour carry every point-data
-                # array along, not just the one used for the isovalue — so a
-                # different color_variable (already on grid_pt) just works.
                 color_variable = cfg.get('color_variable') or variable
                 clim = tv._resolve_clim(cfg, grid.cell_data[color_variable])
                 self._plotter.add_mesh(contours, scalars=color_variable, cmap=cmap, clim=clim,
@@ -2526,8 +2506,6 @@ class Visu3DPanel(ttk.Frame):
 
 
 class TurbVisuTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
-
-    #: Volume rendering needs a full 3-D field, so only these two.
     DTYPES = ('inst', 't_avg')
     """3D visualisation tab — renders inside the GUI panel."""
 
@@ -3073,9 +3051,6 @@ class TurbVisuTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
 class LinkedSlider(ttk.Frame):
     """A slider and an entry bound to one variable, kept in sync.
 
-    Typing a value outside the slider's range is allowed and leaves the slider
-    pinned at its end stop, so the range is a convenience rather than a limit.
-
     `step` snaps values dragged on the slider to a multiple of that increment
     (ttk.Scale, unlike tk.Scale, has no resolution option). Values typed into
     the entry are left exactly as entered, so the step constrains the slider
@@ -3188,8 +3163,6 @@ class MeshAnalysisTab(CaseConsumer, ttk.Frame):
         pw.add(right, weight=1)
 
         self._build_controls(left)
-
-        # The metrics bar spans the full width above both panes.
         self._build_metrics(right)
 
         content = ttk.Panedwindow(right, orient='horizontal')
@@ -3202,8 +3175,6 @@ class MeshAnalysisTab(CaseConsumer, ttk.Frame):
         report_pane = ttk.Frame(content)
         content.add(report_pane, weight=2)
         ttk.Label(report_pane, text='Resolution report:').pack(anchor='w', padx=4, pady=(4, 0))
-        # hbar=True also sets wrap='none': the report is fixed-width text with
-        # 100-character rules, which would look broken re-wrapped in this pane.
         self._report = ttk.ScrolledText(
             report_pane, height=16, state='disabled',
             hbar=True, font=('Monospace', 8),
@@ -3211,9 +3182,6 @@ class MeshAnalysisTab(CaseConsumer, ttk.Frame):
         self._report.pack(fill='both', expand=True, padx=4, pady=2)
 
     def _build_figure(self, parent):
-        # A persistent canvas, unlike FigurePanel which rebuilds on every show:
-        # the sliders redraw continuously, so the canvas is created once and
-        # only its contents are replaced.
         self._fig = Figure(figsize=(6, 7))
         self._canvas = FigureCanvasTkAgg(self._fig, master=parent)
         toolbar = NavigationToolbar2Tk(self._canvas, parent)
@@ -3628,9 +3596,6 @@ class MeshAnalysisTab(CaseConsumer, ttk.Frame):
             return 'warning' if value > limit else 'success'
 
         def growth_style(value):
-            # Growth is a ratio about 1, so "50% over the limit" does not carry
-            # over — 1.5 x 1.3 would call a ruinous 1.9 acceptable. The solver's
-            # own caution/limit pair is used instead.
             if value > 1.3:
                 return 'danger'
             return 'warning' if value > 1.2 else 'success'
@@ -3641,13 +3606,11 @@ class MeshAnalysisTab(CaseConsumer, ttk.Frame):
         entries = {
             're_tau': (f"{res['Re_tau']:.1f}", 'secondary'),
             'dyplus': (f"{dyplus:.2f}", style(dyplus, ma.DYPLUS_MAX)),
-            # Graded against the DNS rule of thumb, not an apx_prerun_mod limit.
             'dycentre': (f"{res['yplus2']:.2f}", style(res['yplus2'],
                                                       ma.DYPLUS_CENTRE_MAX)),
             'dxplus': (f"{res['dxplus']:.1f}", style(res['dxplus'], ma.DXPLUS_MAX)),
             'dzplus': (f"{res['dzplus']:.1f}", style(res['dzplus'], ma.DZPLUS_MAX)),
             'growth': (f"{growth:.3f}", growth_style(growth)),
-            # Above 1 the solver warns of possible instability, so 1 is the limit.
             'diffnum': ((f"{diff['diff_mom']:.3g}", style(diff['diff_mom'], 1.0))
                         if diff else ('-', 'secondary')),
             'cells': (f"{cells / 1e6:.2f}M" if cells >= 1e6 else f"{cells:,}", 'secondary'),
@@ -3669,11 +3632,6 @@ class MeshAnalysisTab(CaseConsumer, ttk.Frame):
 
 class LazyTab(ttk.Frame):
     """Notebook page whose contents are built the first time it is shown.
-
-    Building all five tabs up front dominated startup, and most of that work
-    was for pages the user may never open. The page is registered with the
-    notebook immediately, so tab order and labels are unaffected, but the tab
-    class is not instantiated until the page is first selected.
     """
 
     def __init__(self, parent, factory, **kwargs):
@@ -3918,14 +3876,7 @@ class App(ttk.Window):
             sys.stdout, sys.stderr = self._stdout, self._stderr
         except AttributeError:
             pass
-        # The PyVista/VTK off-screen plotter holds a GL context that must be
-        # closed explicitly while the display connection is still alive.
-        # Without this, it's only finalized during uncontrolled interpreter
-        # shutdown (after Tk has already destroyed its windows), which can
-        # hang for several seconds tearing down the context against a
-        # display that's already gone — worse still through XWayland.
-        # With lazy tabs the 3D page may never have been built, in which case
-        # there is no context to close.
+        
         for holder in self._holders:
             if isinstance(holder.inner, TurbVisuTab):
                 plotter = getattr(holder.inner._visu_panel, '_plotter', None)
