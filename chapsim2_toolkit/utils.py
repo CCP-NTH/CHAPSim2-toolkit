@@ -3,7 +3,6 @@ import os
 import re
 import numpy as np
 import xml.etree.ElementTree as ET
-from tqdm import tqdm
 
 # =====================================================================================================================================================
 # XDMF READING CONFIGURATION
@@ -1180,6 +1179,7 @@ def parse_xdmf_grids(xdmf_path):
             if params is None:
                 continue
             params['shape'] = _effective_shape(params, cell_dims)
+            params['xdmf_path'] = xdmf_path  # so a load can say which file it read
             entry['vars'][name] = params
 
         grids.append(entry)
@@ -1331,7 +1331,8 @@ def load_xdmf_variables(var_metadata, selected_vars, grid_info=None,
         stride: subsample every `stride`-th cell along each axis at read
             time (see _read_binary) so large domains don't need to be fully
             loaded just to be decimated afterwards.
-        quiet: Suppress the per-variable progress log.
+        quiet: Don't print the one-line 'Data loaded for <file>' /
+            'Error: No data found for <file>' report.
 
     Returns:
         dict: {variable_name: numpy_array}. Singleton dimensions are automatically
@@ -1339,10 +1340,6 @@ def load_xdmf_variables(var_metadata, selected_vars, grid_info=None,
     """
     arrays = {}
     cell_dims = (grid_info or {}).get('cell_dimensions')
-
-    missing = [n for n in selected_vars if n not in var_metadata]
-    for name in missing:
-        tqdm.write(f"  Variable '{name}' not found in metadata, skipping")
     present = [n for n in selected_vars if n in var_metadata]
 
     # Group by source file so each bundled .bin is opened once, not once per
@@ -1351,32 +1348,33 @@ def load_xdmf_variables(var_metadata, selected_vars, grid_info=None,
     for name in present:
         by_file.setdefault(var_metadata[name]['bin_path'], []).append(name)
 
-    with tqdm(total=len(present), desc="Loading selected variables", unit="var",
-              disable=quiet or not present) as pbar:
-        for bin_path, names in by_file.items():
-            try:
-                handle = open(bin_path, 'rb')
-            except OSError as e:
-                print(f"Error opening {bin_path}: {e}")
-                pbar.update(len(names))
-                continue
-            try:
-                for name in names:
-                    data = _read_binary(var_metadata[name], stride=stride, handle=handle)
-                    pbar.update(1)
-                    if data is None:
-                        continue
+    for bin_path, names in by_file.items():
+        try:
+            handle = open(bin_path, 'rb')
+        except OSError as e:
+            print(f"Error opening {bin_path}: {e}")
+            continue
+        try:
+            for name in names:
+                data = _read_binary(var_metadata[name], stride=stride, handle=handle)
+                if data is None:
+                    continue
 
-                    # Reshape flat arrays to 3D using cell dimensions
-                    if data.ndim == 1 and cell_dims and data.size == int(np.prod(cell_dims)):
-                        data = data.reshape(cell_dims)
+                # Reshape flat arrays to 3D using cell dimensions
+                if data.ndim == 1 and cell_dims and data.size == int(np.prod(cell_dims)):
+                    data = data.reshape(cell_dims)
 
-                    arrays[name] = _reduce_xdmf_array(
-                        data, average_z=average_z, average_x=average_x)
-                    if not quiet:
-                        tqdm.write(f"  Loaded {name}: shape {arrays[name].shape}")
-            finally:
-                handle.close()
+                arrays[name] = _reduce_xdmf_array(
+                    data, average_z=average_z, average_x=average_x)
+        finally:
+            handle.close()
+
+    if not quiet and var_metadata:
+        source = os.path.basename(next(iter(var_metadata.values())).get('xdmf_path', ''))
+        if arrays and all(name in arrays for name in selected_vars):
+            print(f"Data loaded for {source}")
+        else:
+            print(f"Error: No data found for {source}")
 
     return arrays
 
@@ -1412,11 +1410,6 @@ def parse_xdmf_file(xdmf_path, load_all_vars=None, required_vars=None,
         selected = list(var_metadata)
     else:
         selected = [n for n in var_metadata if _is_selected_variable(n, required_vars)]
-        skipped = len(var_metadata) - len(selected)
-        if skipped:
-            names = [n for n in var_metadata if n not in set(selected)]
-            tqdm.write(f"  Skipping {skipped} unneeded variables: "
-                       f"{', '.join(names[:3])}{'...' if skipped > 3 else ''}")
 
     arrays = load_xdmf_variables(
         var_metadata, selected, grid_info=grid_info,
@@ -1503,11 +1496,10 @@ def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None
                     filtered_files.append(f)
                     break
         existing_files = filtered_files
-        tqdm.write(f"Filtering for data types: {data_types}")
 
-    for xdmf_file in tqdm(existing_files, desc="Processing XDMF files", unit="file"):
+    for xdmf_file in existing_files:
+        source = f"{case}/{os.path.basename(xdmf_file)}" if case else os.path.basename(xdmf_file)
         try:
-            tqdm.write(f"Opening file: {xdmf_file}")
             # tsp_avg output is already space-averaged over its periodic
             # direction, so the squeezed singleton must not be averaged again.
             is_tsp_avg = 'tsp_avg_' in os.path.basename(xdmf_file)
@@ -1520,40 +1512,21 @@ def xdmf_reader_wrapper(file_names, case=None, timestep=None, load_all_vars=None
                 average_x=False if is_tsp_avg else average_x,
             )
 
+            # A file holding none of the requested variables (e.g. thermo when
+            # no thermal statistic is on) was not needed, so it is not reported.
             if arrays:
-                if 'tsp_avg' in xdmf_file:
-                    file_type = 'tsp_avg'
-                elif 't_avg' in xdmf_file:
-                    file_type = 't_avg'
-                elif '_mhd_' in xdmf_file:
-                    file_type = 'mhd'
-                elif '_thermo_' in xdmf_file:
-                    file_type = 'thermo'
-                else:
-                    file_type = 'flow'
-
                 if not grid_info and file_grid_info:
                     grid_info = file_grid_info
-                    if 'node_dimensions' in grid_info:
-                        tqdm.write(f"Grid info: node_dimensions={grid_info['node_dimensions']}, cell_dimensions={grid_info.get('cell_dimensions', 'N/A')}")
-
                 for var_name, var_data in arrays.items():
                     inner_dict[_strip_avg_prefix(var_name)] = var_data
-                tqdm.write(f"Successfully extracted {len(arrays)} arrays from {file_type} file")
-            else:
-                tqdm.write(f"No requested variables in {os.path.basename(xdmf_file)} — skipped")
+                print(f"Data loaded for {source}")
 
         except Exception as e:
-            tqdm.write(f"Error processing {xdmf_file}: {str(e)}")
+            print(f"Error: No data found for {source} ({e})")
             continue
 
-    # Warn about any variables that were requested but not found in any loaded file
-    if not load_all_vars and inner_dict:
-        check_vars = required_vars if required_vars is not None else _BASE_REQUIRED_VARS
-        missing = sorted(v for v in check_vars if v not in inner_dict)
-        if missing:
-            tqdm.write(f"WARNING: {len(missing)} requested variable(s) not found in loaded files: {', '.join(missing)}")
-
+    # A requested variable that no file held is reported by the statistic that
+    # needs it ('Missing <var> data for ...'), so it is not listed here too.
     return visu_arrays_dic, grid_info
 
 
@@ -1696,9 +1669,9 @@ def print_flow_info(ux_data, Re_ref, Re_bulk, case, timestep, y_coords=None):
     tau_w = dudy/Re_ref
     u_tau = np.sqrt(abs(dudy/Re_ref))
     Re_tau = u_tau * Re_ref
+    print('-'*50)
     print(f'Case: {case}, Timestep: {timestep}')
     print(f'Re_bulk = {Re_bulk}, u_tau = {u_tau:.6f}, tau_w = {tau_w:.6e}, Re_tau = {Re_tau:.2f}')
-    print('-'*120)
     return
 
 def get_plane_data(domain_array, plane, index):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 2D Slice Visualiser.
-Requires only numpy, matplotlib, and tqdm.
+Requires only numpy and matplotlib.
 """
 
 import numpy as np
@@ -9,7 +9,6 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import os
 import glob
-from tqdm import tqdm
 
 mpl.rcParams.update({
 "font.family": "serif",
@@ -1390,7 +1389,7 @@ def main():
 
         if slice_config['combined_plot']:
             slices_data = []
-            for variable in tqdm(slice_config['variables'], desc="Preparing", unit="var"):
+            for variable in slice_config['variables']:
                 slice_data = data[variable]
                 # Squeeze any singleton dimensions
                 slice_data = np.squeeze(slice_data)
@@ -1416,7 +1415,7 @@ def main():
                 center_zero=slice_config.get('center_zero', False)
             )
         else:
-            for variable in tqdm(slice_config['variables'], desc="Plotting", unit="var"):
+            for variable in slice_config['variables']:
                 slice_data = np.squeeze(data[variable])
                 c1, c2 = coord1, coord2
                 if slice_config['x_crop'] is not None and axis_info and axis_info['plane'] in ['xz', 'xy']:
@@ -1455,7 +1454,7 @@ def main():
             slices_data = []
             coord1, coord2, axis_labels = None, None, None
 
-            for variable in tqdm(slice_config['variables'], desc="Extracting", unit="var"):
+            for variable in slice_config['variables']:
                 var_data = data[variable]
                 slice_data, coord1, coord2, axis_labels = extract_slice(
                     var_data,
@@ -1496,7 +1495,7 @@ def main():
             )
         else:
             # Process each variable separately
-            for variable in tqdm(slice_config['variables'], desc="Plotting", unit="var"):
+            for variable in slice_config['variables']:
                 var_data = data[variable]
                 slice_data, coord1, coord2, axis_labels = extract_slice(
                     var_data,
@@ -1589,7 +1588,7 @@ def main():
 
                 if slice_config['combined_plot']:
                     slices_data = []
-                    for variable in tqdm(slice_config['variables'], desc="Preparing", unit="var"):
+                    for variable in slice_config['variables']:
                         s_data = np.squeeze(data[variable])
                         c1 = coord1
                         if slice_config['x_crop'] is not None and axis_info and axis_info['plane'] in ['xz', 'xy']:
@@ -1612,7 +1611,7 @@ def main():
                         center_zero=slice_config.get('center_zero', False)
                     )
                 else:
-                    for variable in tqdm(slice_config['variables'], desc="Plotting", unit="var"):
+                    for variable in slice_config['variables']:
                         s_data = np.squeeze(data[variable])
                         c1, c2 = coord1, coord2
                         if slice_config['x_crop'] is not None and axis_info and axis_info['plane'] in ['xz', 'xy']:
@@ -1645,7 +1644,7 @@ def main():
                 if slice_config['combined_plot']:
                     slices_data = []
                     coord1, coord2, axis_labels = None, None, None
-                    for variable in tqdm(slice_config['variables'], desc="Extracting", unit="var"):
+                    for variable in slice_config['variables']:
                         var_data = data[variable]
                         slice_data, coord1, coord2, axis_labels = extract_slice(
                             var_data, slice_config['plane'], slice_config['index'], grid_info
@@ -1670,7 +1669,7 @@ def main():
                         center_zero=slice_config.get('center_zero', False)
                     )
                 else:
-                    for variable in tqdm(slice_config['variables'], desc="Plotting", unit="var"):
+                    for variable in slice_config['variables']:
                         var_data = data[variable]
                         slice_data, coord1, coord2, axis_labels = extract_slice(
                             var_data, slice_config['plane'], slice_config['index'], grid_info

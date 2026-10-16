@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 import os
 import math
 import glob
-from tqdm import tqdm
 
 mpl.rcParams.update({
 "font.family": "serif",
@@ -124,19 +123,17 @@ def load_xdmf_data(visu_folder, timestep, slice_label=None):
     all_data = {}
     grid_info = {}
 
-    with tqdm(total=len(existing_files), desc="Loading XDMF files", unit="file") as pbar:
-        for pattern, filepath in existing_files:
-            pbar.set_postfix_str(pattern[:30])
+    for pattern, filepath in existing_files:
+        # Use the shared XDMF reader from utils
+        arrays, file_grid_info = ut.parse_xdmf_file(filepath, load_all_vars=False)
 
-            # Use the shared XDMF reader from utils
-            arrays, file_grid_info = ut.parse_xdmf_file(filepath, load_all_vars=False)
+        # Store grid info from first file that has it
+        if not grid_info and file_grid_info:
+            grid_info = file_grid_info
 
-            # Store grid info from first file that has it
-            if not grid_info and file_grid_info:
-                grid_info = file_grid_info
-
-            all_data.update(arrays)
-            pbar.update(1)
+        all_data.update(arrays)
+        if arrays:
+            print(f"Data loaded for {pattern}")
 
     return all_data, grid_info
 
@@ -262,19 +259,16 @@ def normalise_results(results, y_coords, Re_ref, ref_temp=None):
 
     normalised = {}
 
-    with tqdm(total=len(results), desc="Normalising", unit="var") as pbar:
-        for name, values in results.items():
-            pbar.set_postfix_str(name)
-            if name == 'ux_velocity':
-                normalised[name] = values / u_tau
-            elif name == 'temperature':
-                if ref_temp is not None:
-                    normalised[name] = values * ref_temp
-                else:
-                    normalised[name] = values
+    for name, values in results.items():
+        if name == 'ux_velocity':
+            normalised[name] = values / u_tau
+        elif name == 'temperature':
+            if ref_temp is not None:
+                normalised[name] = values * ref_temp
             else:
-                normalised[name] = values / u_tau_sq
-            pbar.update(1)
+                normalised[name] = values
+        else:
+            normalised[name] = values / u_tau_sq
 
     return normalised, u_tau, Re_tau
 

@@ -76,8 +76,8 @@ pip install -r requirements.txt   # just the dependencies, no install
 conda env create -f environment.yml
 ```
 
-**Requirements.** The scripts need only NumPy, Matplotlib and tqdm, and run
-on Python 3.8 or newer. Each optional dependency is used by one part only:
+**Requirements.** The scripts need only NumPy and Matplotlib, and run on
+Python 3.8 or newer. Each optional dependency is used by one part only:
 
 | Package | Needed by |
 |---|---|
@@ -137,7 +137,7 @@ the toolkit.
 
 **quick_turb_stats.py** post-processes a single case into one figure of
 velocity, TKE and temperature and one of Reynolds stresses. It needs only
-NumPy, Matplotlib and tqdm, which suits HPC systems. Run it on a serial,
+NumPy and Matplotlib, which suits HPC systems. Run it on a serial,
 data-analysis or interactive node, since bandwidth is usually throttled on
 login nodes. Interactive input.
 

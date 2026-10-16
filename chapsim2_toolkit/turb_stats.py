@@ -13,7 +13,6 @@ from matplotlib.figure import Figure
 import math
 import os
 import re
-from tqdm import tqdm
 
 mpl.rcParams.update({
 "font.family": "serif",
@@ -100,7 +99,7 @@ class Config:
     #: Where figures are written. Blank keeps the historical behaviour
     #: (folder_path when save_to_path is set, plus turb_stats_plots/).
     output_dir: str = ''
-    xdmf_data_type: str = 'tsp_avg'
+    xdmf_data_type: str = 'tsp_avg'          # 'tsp_avg', 't_avg' or 'inst' (spectrum/correlation only)
 
     body_force_on: bool = False
     body_force_component: str = '1'
@@ -143,12 +142,14 @@ class Config:
     # to every plotted case, independent of case name (see _plot_reference_data).
     mhd_NK_ref_case: str = 'Ha_6'
 
-    # 1D streamwise-velocity-fluctuation energy spectrum — see SpectrumComputer.
+    # 1D velocity-fluctuation energy spectra — see SpectrumComputer.
     spectrum_on: bool = False
+    spectrum_components: str = 'u'           # any of u/v/w, e.g. 'u' or 'u,v,w'
     spectrum_direction: str = 'z'
     spectrum_y_coords: str = ''
     spectrum_x_coords: str = ''              # x stations of a z spectrum
     spectrum_kolmogorov_ref_on: bool = True  # k^-5/3 slope line on the spectrum plot
+    spectrum_k_minus3_ref_on: bool = False   # k^-3 slope line on the spectrum plot
 
     # Spanwise two-point velocity correlation — see TwoPointCorrelationComputer.
     two_point_corr_on: bool = False
@@ -257,10 +258,12 @@ class Config:
             lorentz_force_z_on=getattr(config_module, 'lorentz_force_z_on', False),
             mhd_NK_ref_case=getattr(config_module, 'mhd_NK_ref_case', 'Ha_6'),
             spectrum_on=getattr(config_module, 'spectrum_on', False),
+            spectrum_components=getattr(config_module, 'spectrum_components', 'u'),
             spectrum_direction=getattr(config_module, 'spectrum_direction', 'z'),
             spectrum_y_coords=getattr(config_module, 'spectrum_y_coords', ''),
             spectrum_x_coords=getattr(config_module, 'spectrum_x_coords', ''),
             spectrum_kolmogorov_ref_on=getattr(config_module, 'spectrum_kolmogorov_ref_on', True),
+            spectrum_k_minus3_ref_on=getattr(config_module, 'spectrum_k_minus3_ref_on', False),
             two_point_corr_on=getattr(config_module, 'two_point_corr_on', False),
             two_point_corr_components=getattr(config_module, 'two_point_corr_components', 'uu'),
             two_point_corr_y_coords=getattr(config_module, 'two_point_corr_y_coords', ''),
@@ -520,7 +523,9 @@ def create_data_loader(config: Config, data_types: List[str] = None):
         else:
             data_types = list(data_types)
 
-        if re_stress_enabled or re_stress_budget_enabled or config.body_force_on:
+        # Not under 'inst': those statistics are skipped there instead (see
+        # TurbulenceStatsPipeline), rather than loading averaged fields after all.
+        if (re_stress_enabled or re_stress_budget_enabled or config.body_force_on) and data_types != ['inst']:
             if not any(dtype == 't_avg' or dtype == ('tsp_avg') for dtype in data_types):
                 data_types.append('t_avg')
                 print("Added 't_avg' to data_types because enabled stats require time-averaged fields.")
@@ -660,7 +665,7 @@ class TurbulenceTextData:
         case_dir = ut.case_path(self.folder_path, case)
         variables, coords = ut.load_tsp_avg_profiles(case_dir, timestep)
         if not variables:
-            print(f'No tsp_avg profile data found for {case}, {timestep}')
+            print(f'Error: No data found for {case} tsp_avg profiles, timestep {timestep}')
             return
 
         key = f"{case}_{timestep}"
@@ -672,7 +677,7 @@ class TurbulenceTextData:
             direction = coords.get('direction', 'y')
             self.y_coords = coords.get(f'{direction}c', coords.get('yc'))
 
-        print(f"Loaded {len(variables)} tsp_avg profiles for {case}, {timestep}")
+        print(f"Data loaded for {case} tsp_avg profiles, timestep {timestep}")
 
     def get(self, case: str, quantity: str, timestep: str) -> Optional[np.ndarray]:
         """Get a specific profile."""
@@ -745,10 +750,17 @@ class TurbulenceXDMFData:
 
     def load_all(self) -> None:
         """Load all XDMF files for all cases and timesteps"""
+        if self.data_types == ['inst']:
+            # Instantaneous fields are GBs each, so none are held here: the
+            # spectrum and two-point correlation read them one at a time.
+            print("Data type 'inst': no averaged fields are loaded; the spectrum and "
+                  "two-point correlation read the instantaneous fields directly.")
+            if self.average_over_timesteps:
+                self.timesteps = ['avg']
+            return True
         for case in self.cases:
             self._check_averaging(case)
             for timestep in self.timesteps:
-                self._report_missing_groups(case, timestep)
                 self._load_single(case, timestep)
             if self.average_over_timesteps:
                 self._average_over_timesteps(case, self.timesteps)
@@ -788,30 +800,6 @@ class TurbulenceXDMFData:
                 print(f"Note: {case}: {axis} is periodic but not being averaged; "
                       f"averaging it would reduce the sampling noise.")
 
-    def _report_missing_groups(self, case: str, timestep: str) -> None:
-        """Say which physics groups have nothing at this timestep.
-
-        Flow, thermo and MHD are written at their own frequencies, so a
-        case can hold flow at a timestep that has no thermo. Without this
-        the only clue is a generic 'variable not found' several lines
-        later, and a silently dropped temperature profile.
-        """
-        case_dir = ut.case_path(self.folder_path, case)
-        tiers = [str(d) for d in (self.data_types or [])] or ['tsp_avg']
-        for group in ut.VISU_GROUPS:
-            catalogue = ut.visu_catalogue(case_dir, group)
-            if not catalogue:
-                continue                      # this case has no such group at all
-            wanted = [t for t in tiers if t in catalogue]
-            if not wanted:
-                continue                      # group exists, but not in a tier we read
-            if any(timestep in catalogue[t] for t in wanted):
-                continue
-            available = sorted({s for t in wanted for s in catalogue[t]}, key=int)
-            print(f"Note: {case}: no {group} {'/'.join(wanted)} data at timestep "
-                  f"{timestep} (it exists at: {', '.join(available)}). "
-                  f"Statistics needing {group} will be skipped.")
-
     def _load_tsp_avg_profiles(self, case: str, timestep: str, existing_files: List[str]) -> bool:
         """Fall back to the ASCII tsp_avg profile table when there is no XDMF.
 
@@ -842,8 +830,7 @@ class TurbulenceXDMFData:
         direction = coords.get('direction', 'y')
         if self.y_coords is None:
             self.y_coords = coords.get(f'{direction}c', coords.get('yc'))
-        print(f"Loaded {len(variables)} tsp_avg profiles ({direction}-direction) "
-              f"for {case}, {timestep}")
+        print(f"Data loaded for {case} tsp_avg profiles, timestep {timestep}")
         return True
 
     def _load_single(self, case: str, timestep: str) -> None:
@@ -862,7 +849,7 @@ class TurbulenceXDMFData:
             return
 
         if not existing_files:
-            print(f'No .xdmf files found for {case}, {timestep}')
+            print(f'Warning: No data found for {case}, timestep {timestep}')
             return
 
         # Load the XDMF files with averaging flags
@@ -925,10 +912,8 @@ class TurbulenceXDMFData:
 
             # Apply optional x-crop once at load stage
             self.data[key] = self._apply_x_crop_to_arrays(dict(arrays[key]))
-            print(f"Loaded {len(self.data[key])} variables from XDMF files for {case}, {timestep}")
         else:
-            print(f'No {self.data_types} arrays extracted from XDMF files for '
-                  f'{case}, {timestep} — skipping this timestep')
+            print(f"Error: No {'/'.join(self.data_types)} data found for {case}, timestep {timestep}")
 
     def _average_over_timesteps(self, case: str, timesteps: List[str]) -> None:
         """Average loaded variable arrays across timesteps for a given case and store under '{case}_avg'."""
@@ -2161,9 +2146,9 @@ class AnisotropyTerm:
 
 class SpectrumComputer:
     """
-    1D energy spectrum of the streamwise velocity fluctuation (qx_ccc)
-    along a homogeneous direction (x or z), at one or more wall-normal (y)
-    locations.
+    1D energy spectra of the velocity fluctuations u', v' and w' (qx_ccc,
+    qy_ccc, qz_ccc) along a homogeneous direction (x or z), at one or more
+    wall-normal (y) locations.
 
     A spectrum needs the raw, unaveraged instantaneous flow field, so it
     loads the instantaneous XDMF file directly instead of going through the
@@ -2171,8 +2156,9 @@ class SpectrumComputer:
 
     E is the energy per Fourier mode (see op.compute_1d_spectrum), the
     convention of the Vreman & Kuerten spectra in the Chan180 reference data. As
-    there, k = 0 and the Nyquist mode are dropped: qx_ccc is interpolated to
-    cell centres in x, which zeroes the x-direction Nyquist mode.
+    there, k = 0 and the Nyquist mode are dropped: each component is
+    interpolated to cell centres along its own direction, which zeroes the
+    Nyquist mode of u' along x and of w' along z.
 
     A z spectrum is taken at x stations, since x is inhomogeneous in a
     developing flow; every x line is averaged only when 'Average x
@@ -2181,22 +2167,40 @@ class SpectrumComputer:
     the configured snapshots are averaged.
 
     raw_results / processed_results:
-        {(case, timestep): {'k': (n_k,), 'E': (n_y, n_x, n_k), 'y': (n_y,), 'x': (n_x,)}}
-    with 'x' empty when the lines were averaged. Kept out of
-    TurbulenceStatsPipeline.statistics since these aren't plain ndarrays.
+        {(case, timestep): {'k': (n_k,), 'E': {component: (n_y, n_x, n_k)},
+                            'y': (n_y,), 'x': (n_x,)}}
+    with component one of 'u', 'v', 'w' and 'x' empty when the lines were
+    averaged. Kept out of TurbulenceStatsPipeline.statistics since these
+    aren't plain ndarrays.
     """
+
+    # Velocity component -> its cell-centred instantaneous variable.
+    _VARS = {'u': 'qx_ccc', 'v': 'qy_ccc', 'w': 'qz_ccc'}
 
     def __init__(self, folder_path: str, direction: str, y_coords_str: str,
                  x_coords_str: str = '', timesteps: Optional[List[str]] = None,
-                 average_x: bool = False):
+                 average_x: bool = False, components: str = 'u'):
         self.folder_path = folder_path
         self.direction = direction if direction in ('x', 'z') else 'z'
         self.y_coords = [float(s) for s in y_coords_str.replace(',', ' ').split() if s.strip()]
         self.x_coords = [float(s) for s in x_coords_str.replace(',', ' ').split() if s.strip()]
         self.timesteps = list(timesteps) if timesteps else []
         self.average_x = average_x
-        self.raw_results: Dict[Tuple[str, str], Dict[str, np.ndarray]] = {}
-        self.processed_results: Dict[Tuple[str, str], Dict[str, np.ndarray]] = self.raw_results
+
+        self.components: List[str] = []
+        for token in str(components).replace(',', ' ').split():
+            token = token.lower()
+            if token not in self._VARS:
+                print(f"Spectral analysis: ignoring unrecognised component '{token}' "
+                      f"(expected u, v or w, e.g. 'u' or 'u,v,w').")
+            elif token not in self.components:
+                self.components.append(token)
+        if not self.components:
+            print("Spectral analysis: no valid components given; defaulting to 'u'.")
+            self.components = ['u']
+
+        self.raw_results: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        self.processed_results: Dict[Tuple[str, str], Dict[str, Any]] = self.raw_results
 
     def compute_for_case(self, case: str, timestep: str, data_loader=None) -> bool:
         if not self.y_coords:
@@ -2213,9 +2217,9 @@ class SpectrumComputer:
         n_used = 0
         for snapshot in snapshots:
             inst_xdmf = ut.group_xdmf_paths(self.folder_path, case, snapshot)['inst']
+            source = f"{case}/domain1_flow_{snapshot}.xdmf"
             if inst_xdmf is None:
-                print(f"Missing instantaneous flow file for spectral analysis: {case}, {snapshot}\n"
-                      f"  Looked for: domain1_flow_{snapshot}.xdmf")
+                print(f"Error: No data found for {source} (no such file)")
                 continue
 
             var_meta, grid_info = ut.parse_xdmf_metadata(inst_xdmf)
@@ -2223,64 +2227,73 @@ class SpectrumComputer:
             x_nodes = grid_info.get('grid_x')
             z_nodes = grid_info.get('grid_z')
             if y_nodes is None or x_nodes is None or z_nodes is None:
-                print(f"Missing grid coordinates for spectral analysis: {case}, {snapshot}")
+                print(f"Error: No data found for {source} (grid coordinates missing)")
                 continue
 
-            data = ut.load_xdmf_variables(var_meta, ['qx_ccc'], grid_info=grid_info)
-            u = data.get('qx_ccc')  # (nz, ny, nx)
-            if u is None:
-                print(f"Failed to load qx_ccc for spectral analysis: {case}, {snapshot}")
-                continue
-            if u.ndim != 3:
-                print("Spectral analysis needs the full 3D instantaneous field (a 2D slice has "
-                      "no homogeneous direction to transform along); skipping.")
-                return False
+            # One component at a time, so only one multi-GB field is ever in memory.
+            spectra = {}
+            for component in self.components:
+                name = self._VARS[component]
+                data = ut.load_xdmf_variables(var_meta, [name], grid_info=grid_info, quiet=True)
+                field = data.get(name)  # (nz, ny, nx)
+                if field is None:
+                    print(f"Error: No data found for {source} ({name} missing)")
+                    break
+                if field.ndim != 3:
+                    print("Spectral analysis needs the full 3D instantaneous field (a 2D slice has "
+                          "no homogeneous direction to transform along); skipping.")
+                    return False
 
-            nz, ny, nx = u.shape
-            y_cell = (0.5 * (y_nodes[:-1] + y_nodes[1:]))[:ny]
-            x_cell = (0.5 * (x_nodes[:-1] + x_nodes[1:]))[:nx]
-            z_cell = (0.5 * (z_nodes[:-1] + z_nodes[1:]))[:nz]
-            y_indices = [int(np.argmin(np.abs(y_cell - v))) for v in self.y_coords]
+                nz, ny, nx = field.shape
+                y_cell = (0.5 * (y_nodes[:-1] + y_nodes[1:]))[:ny]
+                x_cell = (0.5 * (x_nodes[:-1] + x_nodes[1:]))[:nx]
+                z_cell = (0.5 * (z_nodes[:-1] + z_nodes[1:]))[:nz]
+                y_indices = [int(np.argmin(np.abs(y_cell - v))) for v in self.y_coords]
 
-            # Lines to transform, laid out (n_y, n_lines, n) with the
-            # transform direction last.
-            if self.direction == 'z':
-                if self.x_coords:
-                    x_indices = [int(np.argmin(np.abs(x_cell - v))) for v in self.x_coords]
-                elif self.average_x:
-                    x_indices = list(range(nx))
+                # Lines to transform, laid out (n_y, n_lines, n) with the
+                # transform direction last.
+                if self.direction == 'z':
+                    if self.x_coords:
+                        x_indices = [int(np.argmin(np.abs(x_cell - v))) for v in self.x_coords]
+                    elif self.average_x:
+                        x_indices = list(range(nx))
+                    else:
+                        x_indices = [nx // 2]
+                    lines = np.moveaxis(field[:, y_indices, :][:, :, x_indices], 0, -1)
+                    dx = float(z_cell[1] - z_cell[0])
                 else:
-                    x_indices = [nx // 2]
-                lines = np.moveaxis(u[:, y_indices, :][:, :, x_indices], 0, -1)
-                dx = float(z_cell[1] - z_cell[0])
-            else:
-                x_indices = []
-                lines = np.moveaxis(u[:, y_indices, :], 0, 1)
-                dx = float(x_cell[1] - x_cell[0])
-            del data, u  # release the multi-GB snapshot before the next is read
+                    x_indices = []
+                    lines = np.moveaxis(field[:, y_indices, :], 0, 1)
+                    dx = float(x_cell[1] - x_cell[0])
+                del data, field  # release the multi-GB field before the next is read
 
-            k, E = op.compute_1d_spectrum(lines - lines.mean(axis=-1, keepdims=True), dx=dx)
-            if average_lines:
-                E = E.mean(axis=1, keepdims=True)
-            # Drop the mean (k = 0) and the Nyquist mode an even n ends on.
-            keep = slice(1, (lines.shape[-1] + 1) // 2)
-            k, E = k[keep], E[:, :, keep]
+                k, E = op.compute_1d_spectrum(lines - lines.mean(axis=-1, keepdims=True), dx=dx)
+                if average_lines:
+                    E = E.mean(axis=1, keepdims=True)
+                # Drop the mean (k = 0) and the Nyquist mode an even n ends on.
+                keep = slice(1, (lines.shape[-1] + 1) // 2)
+                k, spectra[component] = k[keep], E[:, :, keep]
 
+            if len(spectra) < len(self.components):
+                continue  # a component failed to load: leave the whole snapshot out
+            print(f"Data loaded for {source}")
             if result is None:
-                result = {'k': k, 'E': E, 'y': y_cell[y_indices],
+                result = {'k': k, 'E': spectra, 'y': y_cell[y_indices],
                           'x': np.array([]) if average_lines else x_cell[x_indices]}
-            elif result['E'].shape != E.shape:
+            elif any(result['E'][c].shape != spectra[c].shape for c in self.components):
                 print(f"Spectral analysis: the grid of {case}, {snapshot} differs from the earlier "
                       f"snapshots; leaving it out of the average.")
                 continue
             else:
-                result['E'] = result['E'] + E
+                for c in self.components:
+                    result['E'][c] = result['E'][c] + spectra[c]
             n_used += 1
 
         if result is None:
             print(f"Spectral analysis: no usable snapshots for {case}, {timestep}")
             return False
-        result['E'] = result['E'] / n_used
+        for c in self.components:
+            result['E'][c] = result['E'][c] / n_used
 
         if timestep == 'avg':
             print(f"Spectral analysis: averaged {n_used} snapshot(s) for {case}")
@@ -2505,9 +2518,9 @@ class TwoPointCorrelationComputer:
         """Correlate one instantaneous snapshot; returns unnormalised results."""
         file_paths = ut.group_xdmf_paths(self.folder_path, case, timestep)
         inst_xdmf = file_paths['inst']
+        source = f"{case}/domain1_flow_{timestep}.xdmf"
         if inst_xdmf is None:
-            print(f"Missing instantaneous flow file for the two-point correlation: {case}, {timestep}\n"
-                  f"  Looked for: domain1_flow_{timestep}.xdmf")
+            print(f"Error: No data found for {source} (no such file)")
             return None
 
         var_meta, grid_info = ut.parse_xdmf_metadata(inst_xdmf)
@@ -2515,7 +2528,7 @@ class TwoPointCorrelationComputer:
                                      grid_info.get('grid_x'),
                                      grid_info.get('grid_z'))
         if y_nodes is None or x_nodes is None or z_nodes is None:
-            print(f"Missing grid coordinates for the two-point correlation: {case}, {timestep}")
+            print(f"Error: No data found for {source} (grid coordinates missing)")
             return None
         y_cell = 0.5 * (y_nodes[:-1] + y_nodes[1:])
         x_cell = 0.5 * (x_nodes[:-1] + x_nodes[1:])
@@ -2523,16 +2536,17 @@ class TwoPointCorrelationComputer:
 
         letters = sorted({c for comp in self.components for c in comp})
         inst_names = [_TWO_POINT_CORR_VARS[c][0] for c in letters]
-        data = ut.load_xdmf_variables(var_meta, inst_names, grid_info=grid_info)
+        data = ut.load_xdmf_variables(var_meta, inst_names, grid_info=grid_info, quiet=True)
 
         missing = [name for name in inst_names if name not in data]
         if missing:
-            print(f"Failed to load {', '.join(missing)} for the two-point correlation: {case}, {timestep}")
+            print(f"Error: No data found for {source} ({', '.join(missing)} missing)")
             return None
         if any(data[name].ndim != 3 for name in inst_names):
             print("The two-point correlation needs the full 3D instantaneous field (a 2D slice has "
                   "no spanwise extent to correlate over); skipping.")
             return None
+        print(f"Data loaded for {source}")
 
         nz, ny, nx = data[inst_names[0]].shape
         if len(z_cell) < nz or len(y_cell) < ny or len(x_cell) < nx:
@@ -2629,6 +2643,8 @@ class TwoPointCorrelationComputer:
                 continue
             var_meta, grid_info = ut.parse_xdmf_metadata(xdmf)
             names = [name for name in wanted.values() if name in var_meta]
+            if not names:
+                continue
             loaded = ut.load_xdmf_variables(var_meta, names, grid_info=grid_info, average_z=True)
             for letter, name in wanted.items():
                 array = loaded.get(name)
@@ -2719,6 +2735,15 @@ class TurbulenceStatsPipeline:
         self.data_loader = data_loader
         self.statistics: List[Union[ReStresses, Profiles, Budget]] = []
         self._register_statistics()
+
+        # An instantaneous snapshot holds no averaged moments, so with data
+        # type 'inst' only the spectrum and two-point correlation can run.
+        if getattr(data_loader, 'data_types', None) == ['inst'] and self.statistics:
+            print(f"Data type 'inst' has no averaged fields, so these are skipped: "
+                  f"{', '.join(stat.name for stat in self.statistics)}. "
+                  f"Choose t_avg or tsp_avg to compute them.")
+            self.statistics = []
+            self.budget_computer = self.force_computer = self.anisotropy_computer = None
 
     def _first_case_dir(self):
         """A case folder to look in for a NIST property table.
@@ -2865,6 +2890,7 @@ class TurbulenceStatsPipeline:
                 self.config.spectrum_x_coords,
                 timesteps=self.config.timesteps,
                 average_x=self.config.average_x_direction,
+                components=self.config.spectrum_components,
             )
 
         # Also kept out of self.statistics — see TwoPointCorrelationComputer.
@@ -2893,59 +2919,42 @@ class TurbulenceStatsPipeline:
         # those is computed in one batched call per case/timestep, covering
         # all its terms, rather than per-stat).
         regular_stats = [s for s in self.statistics if not isinstance(s, (BudgetTerm, ForceTerm, AnisotropyTerm))]
-        n_budget = len(self.budget_computer.enabled_terms) if self.budget_computer else 0
-        n_force = len(self.force_computer.enabled_terms) if self.force_computer else 0
-        n_anisotropy = len(self.anisotropy_computer.enabled_terms) if self.anisotropy_computer else 0
-        total_tasks = len(regular_stats) * len(self.config.cases) * len(timesteps)
-        # Budget/force/anisotropy/spectrum: one compute call per case/timestep (covers all terms)
-        total_tasks += len(self.config.cases) * len(timesteps) if n_budget else 0
-        total_tasks += len(self.config.cases) * len(timesteps) if n_force else 0
-        total_tasks += len(self.config.cases) * len(timesteps) if n_anisotropy else 0
-        total_tasks += len(self.config.cases) * len(timesteps) if self.spectrum_computer else 0
-        total_tasks += len(self.config.cases) * len(timesteps) if self.corr_computer else 0
 
-        with tqdm(total=total_tasks, desc="Computing statistics", unit="stat") as pbar:
-            # Regular stats
-            for stat in regular_stats:
-                for case in self.config.cases:
-                    for timestep in timesteps:
-                        stat.compute_for_case(case, timestep, self.data_loader)
-                        pbar.update(1)
+        # Regular stats
+        for stat in regular_stats:
+            for case in self.config.cases:
+                for timestep in timesteps:
+                    stat.compute_for_case(case, timestep, self.data_loader)
 
-            # TKE budget: one call per case/timestep computes all terms
-            if self.budget_computer:
-                for case in self.config.cases:
-                    for timestep in timesteps:
-                        self.budget_computer.compute_for_case(case, timestep, self.data_loader)
-                        pbar.update(1)
+        # TKE budget: one call per case/timestep computes all terms
+        if self.budget_computer:
+            for case in self.config.cases:
+                for timestep in timesteps:
+                    self.budget_computer.compute_for_case(case, timestep, self.data_loader)
 
-            # Body force analysis: one call per case/timestep computes all terms
-            if self.force_computer:
-                for case in self.config.cases:
-                    for timestep in timesteps:
-                        self.force_computer.compute_for_case(case, timestep, self.data_loader)
-                        pbar.update(1)
+        # Body force analysis: one call per case/timestep computes all terms
+        if self.force_computer:
+            for case in self.config.cases:
+                for timestep in timesteps:
+                    self.force_computer.compute_for_case(case, timestep, self.data_loader)
 
-            # Anisotropy invariants: one call per case/timestep computes all terms
-            if self.anisotropy_computer:
-                for case in self.config.cases:
-                    for timestep in timesteps:
-                        self.anisotropy_computer.compute_for_case(case, timestep, self.data_loader)
-                        pbar.update(1)
+        # Anisotropy invariants: one call per case/timestep computes all terms
+        if self.anisotropy_computer:
+            for case in self.config.cases:
+                for timestep in timesteps:
+                    self.anisotropy_computer.compute_for_case(case, timestep, self.data_loader)
 
-            # Spectral analysis: one call per case/timestep computes all y-locations
-            if self.spectrum_computer:
-                for case in self.config.cases:
-                    for timestep in timesteps:
-                        self.spectrum_computer.compute_for_case(case, timestep, self.data_loader)
-                        pbar.update(1)
+        # Spectral analysis: one call per case/timestep computes all y-locations
+        if self.spectrum_computer:
+            for case in self.config.cases:
+                for timestep in timesteps:
+                    self.spectrum_computer.compute_for_case(case, timestep, self.data_loader)
 
-            # Two-point correlation: one call per case/timestep covers all components
-            if self.corr_computer:
-                for case in self.config.cases:
-                    for timestep in timesteps:
-                        self.corr_computer.compute_for_case(case, timestep, self.data_loader)
-                        pbar.update(1)
+        # Two-point correlation: one call per case/timestep covers all components
+        if self.corr_computer:
+            for case in self.config.cases:
+                for timestep in timesteps:
+                    self.corr_computer.compute_for_case(case, timestep, self.data_loader)
 
     def process_all(self) -> None:
         """Apply normalization and averaging to all computed statistics.
@@ -2956,59 +2965,55 @@ class TurbulenceStatsPipeline:
         # Detect native-array mode (XDMF loader with y_coords)
         y_coords = getattr(self.data_loader, 'y_coords', None)
 
-        total_tasks = sum(len(stat.raw_results) for stat in self.statistics)
         printed_info = set()  # only print flow info once per (case, timestep)
 
-        with tqdm(total=total_tasks, desc="Processing statistics", unit="stat") as pbar:
-            for stat in self.statistics:
-                for (case, timestep), values in stat.raw_results.items():
+        for stat in self.statistics:
+            for (case, timestep), values in stat.raw_results.items():
 
-                    # Get u1 data for normalization
-                    ux_data = self.data_loader.get(case, 'u1', timestep)
-                    if ux_data is None:
-                        print(f'Missing u1 data for normalization: {case}, {timestep}')
-                        pbar.update(1)
-                        continue
+                # Get u1 data for normalization
+                ux_data = self.data_loader.get(case, 'u1', timestep)
+                if ux_data is None:
+                    print(f'Missing u1 data for normalization: {case}, {timestep}')
+                    continue
 
-                    ref_Re = op.get_ref_Re(case, self.config.cases, self.config.Re)
+                ref_Re = op.get_ref_Re(case, self.config.cases, self.config.Re)
 
-                    # Normalize (element-wise — works for any ndim). Anisotropy
-                    # invariants are already dimensionless (built from a
-                    # normalized tensor), so u_tau^2 normalization doesn't apply.
-                    if (self.config.norm_by_u_tau_sq
-                            and stat.name not in NOT_NORMALISED_BY_U_TAU_SQ):
-                        normed = op.norm_turb_stat_wrt_u_tau_sq(ux_data, values, ref_Re, y_coords=y_coords)
-                    else:
-                        normed = values
+                # Normalize (element-wise — works for any ndim). Anisotropy
+                # invariants are already dimensionless (built from a
+                # normalized tensor), so u_tau^2 normalization doesn't apply.
+                if (self.config.norm_by_u_tau_sq
+                        and stat.name not in NOT_NORMALISED_BY_U_TAU_SQ):
+                    normed = op.norm_turb_stat_wrt_u_tau_sq(ux_data, values, ref_Re, y_coords=y_coords)
+                else:
+                    normed = values
 
-                    # Special normalization for u1 velocity
-                    if self.config.norm_ux_by_u_tau and stat.name == 'ux_velocity':
-                        normed = op.norm_ux_velocity_wrt_u_tau(ux_data, ref_Re, y_coords=y_coords)
-                        print(f'u1 velocity normalised by u_tau for {case}, {timestep}')
+                # Special normalization for u1 velocity
+                if self.config.norm_ux_by_u_tau and stat.name == 'ux_velocity':
+                    normed = op.norm_ux_velocity_wrt_u_tau(ux_data, ref_Re, y_coords=y_coords)
+                    print(f'u1 velocity normalised by u_tau for {case}, {timestep}')
 
 
-                    is_x_profile_only = getattr(stat, 'x_profile_only', False)
-                    is_anisotropy_invariant = stat.name in (
-                        'reynolds_ii', 'reynolds_iii', 'vorticity_ii', 'vorticity_iii',
-                    )
-                    side = self.config.half_side
-                    if side is not None and not is_x_profile_only and not is_anisotropy_invariant:
-                        # u'v' changes sign across the centreline and a heated
-                        # channel's temperature need not be symmetric, so
-                        # neither is folded: 'average' shows their lower half.
-                        if side == 'average' and stat.name in ('u_prime_v_prime', 'temperature'):
-                            side = 'lower'
-                        stat.processed_results[(case, timestep)] = op.apply_half_channel(normed, side)
-                    else:
-                        stat.processed_results[(case, timestep)] = normed
+                is_x_profile_only = getattr(stat, 'x_profile_only', False)
+                is_anisotropy_invariant = stat.name in (
+                    'reynolds_ii', 'reynolds_iii', 'vorticity_ii', 'vorticity_iii',
+                )
+                side = self.config.half_side
+                if side is not None and not is_x_profile_only and not is_anisotropy_invariant:
+                    # u'v' changes sign across the centreline and a heated
+                    # channel's temperature need not be symmetric, so
+                    # neither is folded: 'average' shows their lower half.
+                    if side == 'average' and stat.name in ('u_prime_v_prime', 'temperature'):
+                        side = 'lower'
+                    stat.processed_results[(case, timestep)] = op.apply_half_channel(normed, side)
+                else:
+                    stat.processed_results[(case, timestep)] = normed
 
-                    # Print flow info once per (case, timestep)
-                    if (case, timestep) not in printed_info:
-                        cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data,
-                                           self.config.forcing, y_coords=y_coords)
-                        ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep, y_coords=y_coords)
-                        printed_info.add((case, timestep))
-                    pbar.update(1)
+                # Print flow info once per (case, timestep)
+                if (case, timestep) not in printed_info:
+                    cur_Re = op.get_Re(case, self.config.cases, self.config.Re, ux_data,
+                                       self.config.forcing, y_coords=y_coords)
+                    ut.print_flow_info(ux_data, ref_Re, cur_Re, case, timestep, y_coords=y_coords)
+                    printed_info.add((case, timestep))
 
     def get_statistic(self, name: str) -> Optional[Union[ReStresses, Profiles, Budget]]:
         """Get a specific statistic by name"""
@@ -3683,8 +3688,8 @@ class TurbulencePlotter:
         return fig
 
     def plot_spectrum(self, spectrum_computer: Optional[SpectrumComputer]):
-        """1D streamwise-velocity-fluctuation energy spectrum: log-log E(k)
-        vs k, one curve per (case, timestep, y-location, x-station).
+        """1D velocity-fluctuation energy spectra: log-log E(k) vs k, one
+        curve per (case, timestep, component, y-location, x-station).
 
         Not part of plot_by_class's grouped-statistics machinery — see
         SpectrumComputer's docstring — so this is called directly by
@@ -3699,35 +3704,44 @@ class TurbulencePlotter:
 
         direction = spectrum_computer.direction
         for (case, timestep), data in spectrum_computer.processed_results.items():
-            for y_index, y_value in enumerate(data['y']):
-                for x_index in range(data['E'].shape[1]):
-                    suffix = f' y={float(y_value):.3g}'
-                    if len(data['x']):
-                        suffix += f" x={float(data['x'][x_index]):.3g}"
-                    label = self._build_legend_label(f'{direction}-spectrum', case, timestep, suffix)
-                    color = self._get_color(f'{case}|{timestep}|{y_index}|{x_index}', 'spectrum')
-                    ax.loglog(data['k'], data['E'][y_index, x_index], label=label, color=color,
-                              linestyle=self._get_linestyle(case))
+            for component, E in data['E'].items():
+                for y_index, y_value in enumerate(data['y']):
+                    for x_index in range(E.shape[1]):
+                        suffix = f' {component}{component} y={float(y_value):.3g}'
+                        if len(data['x']):
+                            suffix += f" x={float(data['x'][x_index]):.3g}"
+                        label = self._build_legend_label(f'{direction}-spectrum', case, timestep, suffix)
+                        color = self._get_color(f'{case}|{timestep}|{component}|{y_index}|{x_index}',
+                                                'spectrum')
+                        ax.loglog(data['k'], E[y_index, x_index], label=label, color=color,
+                                  linestyle=self._get_linestyle(case))
 
-        # Kolmogorov k^-5/3 reference. Only its slope means anything, so it
-        # spans the middle half of the (log) k range, just above every curve.
+        # Reference slopes: Kolmogorov k^-5/3 and k^-3 (quasi-2D turbulence,
+        # e.g. under a strong magnetic field). Only the slope means anything, so
+        # each spans the middle half of the (log) k range, just above every curve.
+        references = []
         if self.config.spectrum_kolmogorov_ref_on:
-            lines = ax.get_lines()
-            k_min = min(line.get_xdata().min() for line in lines)
-            k_max = max(line.get_xdata().max() for line in lines)
+            references.append((5 / 3, '--', '$k^{-5/3}$'))
+        if self.config.spectrum_k_minus3_ref_on:
+            references.append((3, '-.', '$k^{-3}$'))
+        curves = ax.get_lines()  # taken before any reference line is drawn
+        for power, linestyle, ref_label in references:
+            k_min = min(line.get_xdata().min() for line in curves)
+            k_max = max(line.get_xdata().max() for line in curves)
             k_ref = np.geomspace(k_min * (k_max / k_min) ** 0.25, k_min * (k_max / k_min) ** 0.75, 20)
             level = 0.0
-            for line in lines:
+            for line in curves:
                 k, E = line.get_xdata(), line.get_ydata()
                 inside = (k >= k_ref[0]) & (k <= k_ref[-1])
-                level = max(level, float(np.max(E[inside] * k[inside] ** (5 / 3), initial=0.0)))
-            ax.loglog(k_ref, 1.5 * level * k_ref ** (-5 / 3), '--', color='black', linewidth=1,
-                      alpha=0.5, label='$k^{-5/3}$')
+                level = max(level, float(np.max(E[inside] * k[inside] ** power, initial=0.0)))
+            ax.loglog(k_ref, 1.5 * level * k_ref ** (-power), linestyle, color='black', linewidth=1,
+                      alpha=0.5, label=ref_label)
 
-        ax.set_title(f"Streamwise Velocity Fluctuation Spectrum ({direction}-direction)",
+        ax.set_title(f"Velocity Fluctuation Spectrum ({direction}-direction)",
                      fontsize=self._get_title_fontsize())
         ax.set_xlabel(f'$k_{direction}$', fontsize=self._get_axis_label_fontsize())
-        ax.set_ylabel(f'$E_{{uu}}(k_{direction})$', fontsize=self._get_axis_label_fontsize())
+        ax.set_ylabel(', '.join(f'$E_{{{c}{c}}}(k_{direction})$' for c in spectrum_computer.components),
+                      fontsize=self._get_axis_label_fontsize())
         ax.grid(True, which='both')
         handles, labels = ax.get_legend_handles_labels()
         if handles:
@@ -4337,32 +4351,37 @@ def main(argv: List[str] = None):
 
     config = load_config(args.config)
 
-    print("="*120)
+    print("="*50)
     print("TURBULENCE STATISTICS PROCESSING")
-    print("="*120)
+    print("="*50)
 
     # Load turbulence data using the appropriate loader
+    print('-'*50)
     print("\nLoading turbulence data...")
     data_loader = create_data_loader(config)
     data_loader.load_all()
 
     # Load reference data
+    print('-'*50)
     print("\nLoading reference data...")
     reference_data = ReferenceData(config)
     reference_data.load_all()
 
     # Compute statistics
+    print('-'*50)
     print("\nComputing turbulence statistics...")
     pipeline = TurbulenceStatsPipeline(config, data_loader)
     pipeline.compute_all()
 
     # Process statistics (normalize, average)
+    print('-'*50)
     print("\nProcessing statistics...")
     print("\nFlow info:\n")
     pipeline.process_all()
 
     # Plot results
     if config.display_fig or config.save_fig:
+        print('-'*50)
         print("\nGenerating plots...")
         plot_config = PlotConfig()
         plotter = TurbulencePlotter(config, plot_config, data_loader)

@@ -33,7 +33,7 @@ jobs:
           # It is only installable on 3.10+, so on 3.9 those tests skip -
           # which is the truth about the GUI, not a gap in the testing.
           # pandas is in install_requires and thermal_BC_calc needs it.
-          pip install numpy matplotlib tqdm pandas pytest \
+          pip install numpy matplotlib pandas pytest \
                       "ttkbootstrap>=2.0.0; python_version>='3.10'"
 
       - name: Install a virtual display for the GUI tests

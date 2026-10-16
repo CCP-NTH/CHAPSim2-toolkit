@@ -25,10 +25,6 @@ def generate_property_table(T_min, T_max, fluid='lithium', pressure=1.0e5,
     file this writes can be handed straight back to the solver as a
     table-based fluid - which is the only use a property table has here.
 
-    It used to emit molar quantities for lithium alone, in a mix of kJ/mol,
-    J/mol/K and micro Pa s, in a layout the solver cannot read. Everything
-    is SI now and every fluid works.
-
     Args:
         T_min, T_max: temperature range in K. Clipped to the range the
             fluid's properties are valid over.
@@ -197,11 +193,7 @@ def generate_normalized_property_table(fluid, T_ref, delta_T, n_points=20):
     Map the change in thermophysical properties across a temperature range,
     each non-dimensionalised by its own value at the reference temperature.
 
-    Temperature ranges from T_ref to T_ref + delta_T, so every property
-    column starts at 1.0 (its value at T_ref) — useful for seeing which
-    properties vary most strongly (and whether a constant-property
-    assumption is reasonable) over the temperature difference applied at
-    a thermal boundary condition.
+    Temperature ranges from T_ref to T_ref + delta_T.
 
     Parameters:
     -----------

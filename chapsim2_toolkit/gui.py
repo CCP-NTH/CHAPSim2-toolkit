@@ -591,14 +591,13 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         self._scan_lbl.pack(anchor='w', fill='x', padx=2)
         self._t_cases = trow(s, ' Case folder names (one per line)', height=2, label_above=True)
         self._t_timesteps = trow(s, ' Timesteps (one per line)', height=2, label_above=True)
-        # Statistics need averaged fields; 'inst' is not offered because an
-        # instantaneous snapshot has no Reynolds stresses to report.
+        # Profile statistics need averaged fields; 'inst' loads none of them, for
+        # runs that only want the spectrum or two-point correlation.
         crow(s, ' Input format', sv('input_format', 'xdmf'), ['xdmf', 'text'])
-        crow(s, ' Data type', sv('xdmf_data_type', 'tsp_avg'), ['tsp_avg', 't_avg'])
+        crow(s, ' Data type', sv('xdmf_data_type', 'tsp_avg'), ['tsp_avg', 't_avg', 'inst'])
         self.vars['folder_path'].trace_add('write', lambda *_: self._scan_cases())
 
-        # Re and the forcing apply to every case, thermal or not, so they are
-        # not filed under the thermal input.
+        # ---- General ----
         s = sec('Flow Parameters')
         self._t_re = trow(s, ' Bulk Reynolds no. (one per case if different)', height=2, label_above=True)
         self._t_re.insert('1.0', '5000')
@@ -672,7 +671,8 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         erow(s, 'Corr. max sep. (cells)', sv('two_point_corr_max_sep', '0'))
         crow(s, 'Correlation mean', sv('two_point_corr_mean_mode', 't_avg'),
              ['t_avg', 'snapshot'])
-        chk(s, "1D u' energy spectrum (requires full 3D field)", bv('spectrum_on', False))
+        chk(s, "1D velocity energy spectrum (requires full 3D field)", bv('spectrum_on', False))
+        erow(s, 'Spectrum components', sv('spectrum_components', 'u'))
         crow(s, 'Spectrum direction', sv('spectrum_direction', 'z'), ['z', 'x'])
         erow(s, 'Spectrum y coords', sv('spectrum_y_coords', ''))
         erow(s, 'Spectrum x stations', sv('spectrum_x_coords', ''))
@@ -744,7 +744,8 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         nk_hartmann_row = crow(s, 'NK reference Hartmann no.', sv('mhd_NK_ref_case', 'Ha_6'), ['Ha_4', 'Ha_6'])
         mkm180_row = chk(s, 'MKM180 reference', bv('mkm180_ch_ref_on', False))
         kolmogorov_row = chk(s, 'Spectrum k^-5/3 reference', bv('spectrum_kolmogorov_ref_on', True))
-        ref_rows = [loglaw_row, mhd_nk_row, nk_hartmann_row, mkm180_row, kolmogorov_row]
+        k_minus3_row = chk(s, 'Spectrum k^-3 reference', bv('spectrum_k_minus3_ref_on', False))
+        ref_rows = [loglaw_row, mhd_nk_row, nk_hartmann_row, mkm180_row, kolmogorov_row, k_minus3_row]
 
         # ---- Thermal/MHD-driven visibility --------------------------------------
         # Toggles/rows within each affected section are always fully re-packed in
@@ -1112,10 +1113,12 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             two_point_corr_max_sep=self._parse_int(v['two_point_corr_max_sep'].get()),
             two_point_corr_mean_mode=v['two_point_corr_mean_mode'].get(),
             spectrum_on=v['spectrum_on'].get(),
+            spectrum_components=v['spectrum_components'].get(),
             spectrum_direction=v['spectrum_direction'].get(),
             spectrum_y_coords=v['spectrum_y_coords'].get(),
             spectrum_x_coords=v['spectrum_x_coords'].get(),
             spectrum_kolmogorov_ref_on=v['spectrum_kolmogorov_ref_on'].get(),
+            spectrum_k_minus3_ref_on=v['spectrum_k_minus3_ref_on'].get(),
         )
 
     # ------ Run pipeline -------------------------------------------------------------
@@ -1203,7 +1206,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             spec.loader.exec_module(mod)
             v = self.vars
             str_fields = {
-                'folder_path': '', 'input_format': 'xdmf', 'forcing': 'CMF',
+                'folder_path': '', 'input_format': 'xdmf', 'xdmf_data_type': 'tsp_avg', 'forcing': 'CMF',
                 'working_fluid': 'lithium', 'profile_direction': 'y',
                 'slice_coords': '', 'x_crop': '', 'x_profile_y_coords': '',
                 're_stress_component': 'uu11', 'vorticity_component': 'z',
@@ -1212,7 +1215,8 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
                 'two_point_corr_x_coords': '', 'two_point_corr_max_sep': 0,
                 'two_point_corr_mean_mode': 't_avg',
                 'output_dir': '', 'geometry': 'channel',
-                'spectrum_direction': 'z', 'spectrum_y_coords': '', 'spectrum_x_coords': '',
+                'spectrum_components': 'u', 'spectrum_direction': 'z',
+                'spectrum_y_coords': '', 'spectrum_x_coords': '',
             }
             bool_fields = {
                 'thermo_on': False, 'mhd_on': False,
@@ -1235,7 +1239,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
                 'mhd_NK_ref_on': False, 'mkm180_ch_ref_on': False,
                 'save_fig': True,
                 'two_point_corr_on': False, 'spectrum_on': False,
-                'spectrum_kolmogorov_ref_on': True,
+                'spectrum_kolmogorov_ref_on': True, 'spectrum_k_minus3_ref_on': False,
             }
             for name, default in str_fields.items():
                 if name in v:
@@ -1304,6 +1308,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             '',
             f"folder_path = '{v['folder_path'].get()}'",
             f"input_format = '{v['input_format'].get()}'",
+            f"xdmf_data_type = '{v['xdmf_data_type'].get()}'",
             f"cases = {fmts(cases)}",
             f"timesteps = {fmts(tss)}",
             f"forcing = '{v['forcing'].get()}'",
@@ -1371,6 +1376,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             f"two_point_corr_mean_mode = '{v['two_point_corr_mean_mode'].get()}'",
             '',
             f"spectrum_on = {v['spectrum_on'].get()}",
+            f"spectrum_components = '{v['spectrum_components'].get()}'",
             f"spectrum_direction = '{v['spectrum_direction'].get()}'",
             f"spectrum_y_coords = '{v['spectrum_y_coords'].get()}'",
             f"spectrum_x_coords = '{v['spectrum_x_coords'].get()}'",
@@ -1400,6 +1406,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             f"mhd_NK_ref_case = '{v['mhd_NK_ref_case'].get()}'",
             f"mkm180_ch_ref_on = {v['mkm180_ch_ref_on'].get()}",
             f"spectrum_kolmogorov_ref_on = {v['spectrum_kolmogorov_ref_on'].get()}",
+            f"spectrum_k_minus3_ref_on = {v['spectrum_k_minus3_ref_on'].get()}",
         ]
         try:
             with open(path, 'w') as fh:

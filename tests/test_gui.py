@@ -238,6 +238,9 @@ def test_settings_survive_a_round_trip_through_a_config_file():
         tab._t_re.insert('1.0', '1234')
         tab.vars['geometry'].set('pipe')
         tab.vars['tke_on'].set(True)
+        tab.vars['spectrum_components'].set('u,w')
+        tab.vars['spectrum_k_minus3_ref_on'].set(True)
+        tab.vars['xdmf_data_type'].set('inst')
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, 'config.py')
@@ -250,6 +253,9 @@ def test_settings_survive_a_round_trip_through_a_config_file():
                 tab._t_re.insert('1.0', '1')
                 tab.vars['geometry'].set('channel')
                 tab.vars['tke_on'].set(False)
+                tab.vars['spectrum_components'].set('u')
+                tab.vars['spectrum_k_minus3_ref_on'].set(False)
+                tab.vars['xdmf_data_type'].set('tsp_avg')
 
                 tab._load_cfg()
                 _no_complaint(boxes)
@@ -257,6 +263,9 @@ def test_settings_survive_a_round_trip_through_a_config_file():
             assert _text(tab._t_re) == '1234'
             assert tab.vars['geometry'].get() == 'pipe'
             assert tab.vars['tke_on'].get() is True
+            assert tab.vars['spectrum_components'].get() == 'u,w'
+            assert tab.vars['spectrum_k_minus3_ref_on'].get() is True
+            assert tab.vars['xdmf_data_type'].get() == 'inst'
 
 
 def test_the_config_it_writes_is_one_turb_stats_can_read():

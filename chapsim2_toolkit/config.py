@@ -18,7 +18,8 @@
 
 folder_path = '' # parent of the case folders; each case holds 1_data/, 2_visu/{xdmf,data,mesh}/, 3_monitor/
 input_format = 'visu' # 'visu' (.xdmf + .bin) or 'text' (tsp_avg ASCII profile tables)
-xdmf_data_type = 'tsp_avg' # 'tsp_avg' (space-averaged: a plane, or a 1D profile table) or 't_avg' (3D)
+xdmf_data_type = 'tsp_avg' # 'tsp_avg' (space-averaged: a plane, or a 1D profile table), 't_avg' (3D),
+                           # or 'inst' (no averaged fields: spectrum and two-point correlation only)
 slice_label = '' # 2D slice label (e.g. 'yi8' for xz slice at y index 8), leave blank for full 3D data
 cases = ['Tests'] # case names must match folder names exactly. Add multiple in a list.
 timesteps = ['680000'] # Add multiple in a list
@@ -82,8 +83,9 @@ two_point_corr_mean_mode = 't_avg' # 't_avg' (u' = u_inst - u_t_avg) or 'snapsho
 # The correlation is folded about the centreline only when half_channel_side = 'average' (symmetric channels only;
 # a warning is printed if the lower and upper walls differ)
 
-# 1D energy spectrum of u' (needs instantaneous 3D visu data)
+# 1D energy spectra of u', v', w' (needs instantaneous 3D visu data)
 spectrum_on = False
+spectrum_components = 'u' # any of u/v/w, e.g. 'u' or 'u,v,w'
 spectrum_direction = 'z' # 'z' (spanwise) or 'x' (streamwise, assumes x is periodic)
 spectrum_y_coords = '' # y coords to take the spectrum at, e.g. '-0.9,0.0'
 spectrum_x_coords = '' # x stations of a z spectrum (blank = mid-domain, or all x if average_x_direction)
@@ -124,5 +126,6 @@ ux_velocity_log_ref_on = True
 mhd_NK_ref_on = False # MHD turbulent channel at Re_tau=150, Ha=(4,6), Noguchi & Kasagi 1994 (thtlabs.jp)
 mkm180_ch_ref_on = False # Turbulent channel at Re_tau=180, Moser, Kim & Mansour 1999 (DOI: 10.1017/S002211209900708X)
 spectrum_kolmogorov_ref_on = True # k^-5/3 slope line on the 1D spectrum plot
+spectrum_k_minus3_ref_on = False # k^-3 slope line on the 1D spectrum plot (quasi-2D / strong-field MHD turbulence)
 
 #====================================================================================================================================================

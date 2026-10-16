@@ -4,7 +4,6 @@ import os
 import glob
 import numpy as np
 import pyvista as pv
-from tqdm import tqdm
 
 from chapsim2_toolkit import utils as ut
 from chapsim2_toolkit import operations as op

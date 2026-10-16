@@ -270,14 +270,16 @@ def test_a_group_absent_at_a_timestep_is_reported():
         skip('no case writes flow and thermo at different timesteps')
 
     case, step = target
+    name = os.path.basename(case)
     loader = ts.TurbulenceXDMFData(
-        os.path.dirname(case), [os.path.basename(case)], [step],
+        os.path.dirname(case), [name], [step],
         data_types=['tsp_avg'], average_x=False, average_z=False)
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
         loader.load_all()
+        ts.Temperature(False, [1.0], [name]).compute_for_case(name, step, loader)
     message = printed.getvalue()
-    assert 'no thermo' in message and 'it exists at' in message, message
+    assert f'Missing T data for temperature calculation: {name}, {step}' in message, message
 
 
 def test_mhd_statistics_run_on_a_real_mhd_case():
