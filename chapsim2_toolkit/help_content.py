@@ -58,18 +58,14 @@ How to use
 
 1. Choose the case, once
 ------------------------
-Use the Case bar at the top of the window. Point it at a CHAPSim2 case
-folder - the directory holding 1_data/, 2_visu/, 3_monitor/. Any
-subdirectory of the case will do; it is normalised to the case root.
+Use the Case bar beside the tabs, at the top right of the window (it moves
+above the tabs when the window is too narrow for both). Point it at a
+CHAPSim2 case folder - the directory holding 1_data/, 2_visu/, 3_monitor/.
+Any subdirectory of the case will do; it is normalised to the case root.
 
-The line underneath summarises what was found:
-
-    pipe_scp_inout_qw | timesteps: 0, 20, 40, 60 | input_chapsim.ini
-
-If it says "no visualisation output", or the timestep you want is missing, 
-the path is wrong or data is otherwise unavailable. Choosing a case sets up 
-all the tabs at once. Every tab still has its own path field, so one can be 
-pointed at a different case if you want to compare.
+Choosing a case sets up all the tabs at once, and each tab shows what it
+found there. Every tab still has its own path field, so one can be pointed
+at a different case if you want to compare.
 
 2. Pick a tab
 ----------------------

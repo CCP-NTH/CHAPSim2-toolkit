@@ -96,20 +96,13 @@ def test_closing_restores_the_real_streams():
     assert sys.stdout is before                  # and put back on close
 
 
-def test_the_case_bar_rejects_a_path_that_is_not_a_directory():
+def test_the_case_bar_ignores_a_path_that_is_not_a_directory():
     with gui_app() as app:
+        realised = [holder.inner is not None for holder in app._holders]
         app.case_path.set('/definitely/not/here')
         app._apply_case()
-        assert 'Not a directory' in app._case_summary.cget('text')
-
-
-def test_a_case_is_described_by_what_it_actually_holds():
-    case = _solver_case(MHD_CASE)
-    with gui_app() as app:
-        summary = app._describe(case)
-        assert os.path.basename(case) in summary
-        assert 'input_chapsim.ini' in summary
-        assert 'timesteps:' in summary
+        assert [holder.inner is not None for holder in app._holders] == realised, \
+            'no tab is handed the path'
 
 
 def test_applying_a_case_reaches_every_tab_without_complaint():

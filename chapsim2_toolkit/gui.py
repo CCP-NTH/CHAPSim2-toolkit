@@ -91,7 +91,7 @@ def _plain_axes(axis_labels):
 
 
 class MetricStrip(ttk.Frame):
-    """A row of headline numbers above a figure panel.
+    """A row of headline numbers below a figure panel.
 
     """
 
@@ -922,14 +922,16 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             self._t_timesteps.insert('1.0', steps[-1])
 
     def _build_plot(self, parent):
-        # The numbers a user checks first, shown above the figure so the pane
+        # The numbers a user checks first, shown under the figure so the pane
         # is not blank until a run finishes.
         self._metrics = MetricStrip(parent, [
             ('case', 'case'), ('timestep', 'timestep'), ('re_bulk', 'Re_bulk'),
             ('re_tau', 'Re_tau'), ('u_tau', 'u_tau'), ('tau_w', 'tau_w'),
             ('ny', 'wall-normal cells'), ('source', 'data'),
         ])
-        self._metrics.pack(fill='x', padx=5, pady=(5, 0))
+        # Packed before the figure panel, so side='bottom' puts it under the
+        # plot and its toolbar.
+        self._metrics.pack(side='bottom', fill='x', padx=5, pady=(2, 5))
 
         ctrl = ttk.Frame(parent)
         ctrl.pack(fill='x', padx=5, pady=3)
@@ -1461,7 +1463,9 @@ class SliceTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             ('plane', 'plane'), ('location', 'slice at'),
             ('vmin', 'min'), ('vmax', 'max'), ('vmean', 'mean'),
         ])
-        self._metrics.pack(fill='x', padx=5, pady=(5, 0))
+        # Packed before the figure panel, so side='bottom' puts it under the
+        # plot and its toolbar.
+        self._metrics.pack(side='bottom', fill='x', padx=5, pady=(2, 5))
         self._panel = FigurePanel(right, placeholder='Load variables and click Plot.')
         self._panel.pack(fill='both', expand=True)
 
@@ -1976,7 +1980,9 @@ class MonitorPointsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             ('points', 'monitor points'), ('samples', 'samples plotted'),
             ('tstart', 't start'), ('tend', 't end'), ('dropped', 'rows dropped'),
         ])
-        self._metrics.pack(fill='x', padx=5, pady=(5, 0))
+        # Packed before the figure panel, so side='bottom' puts it under the
+        # plot and its toolbar.
+        self._metrics.pack(side='bottom', fill='x', padx=5, pady=(2, 5))
         self._panel = FigurePanel(right, placeholder='Configure and click Run.')
         self._panel.pack(fill='both', expand=True)
 
@@ -3744,12 +3750,8 @@ class App(ttk.Window):
         self.console = ConsolePanel(self)
         self.console.pack(side='right', fill='y')
 
-        # One case bar for the whole window: the tabs each need the case in a
-        # different shape, so they translate it rather than share a variable.
         body = ttk.Frame(self)
         body.pack(side='left', fill='both', expand=True)
-        self.case_path = tk.StringVar()
-        self._build_case_bar(body)
 
         nb = ttk.Notebook(body)
         nb.pack(side='top', fill='both', expand=True)
@@ -3766,6 +3768,16 @@ class App(ttk.Window):
         # while the binding was not yet in place, so realise it explicitly.
         self._realise_current()
 
+        # One case bar for the whole window: the tabs each need the case in a
+        # different shape, so they translate it rather than share a variable.
+        # Built after the notebook so it is drawn on top of the tab row it sits in.
+        self.case_path = tk.StringVar()
+        self._build_case_bar(body)
+        nb.bind('<Configure>', self._fit_case_bar, add='+')
+        # _realise_current has already laid the window out, so fit it now
+        # rather than waiting for a resize.
+        self._fit_case_bar()
+
         # One app-wide redirect: TextRedirect marshals writes onto the Tk
         # thread, so print() from worker threads (and from any tab's tools)
         # lands in the console. Restored in _on_close.
@@ -3774,21 +3786,37 @@ class App(ttk.Window):
         sys.stderr = TextRedirect(self.console)
 
     def _build_case_bar(self, parent):
+        # Compact (23 px) so it fits the notebook's 27 px tab row; placed there
+        # by _fit_case_bar.
+        ttk.Style().configure('Compact.TEntry', padding=(5, 2))
         bar = ttk.Frame(parent)
-        bar.pack(side='top', fill='x', padx=6, pady=(6, 2))
         ttk.Label(bar, text='Case:').pack(side='left')
-        ttk.Entry(bar, textvariable=self.case_path).pack(
-            side='left', fill='x', expand=True, padx=4)
-        ttk.Button(bar, text='Browse…', width=9,
+        self._case_entry = ttk.Entry(bar, textvariable=self.case_path, style='Compact.TEntry')
+        self._case_entry.pack(side='left', fill='x', expand=True, padx=4)
+        ttk.Button(bar, text='Browse…', padding=(6, 1),
                    command=self._browse_case).pack(side='left')
-        ttk.Button(bar, text='Apply to all tabs', width=17,
-                   command=self._apply_case).pack(side='left', padx=4)
-        ttk.Button(bar, text='Help', width=6,
-                   command=self.show_help).pack(side='left')
-        self._case_summary = ttk.Label(parent, text='No case selected.',
-                                       foreground='grey', wraplength=1200,
-                                       justify='left')
-        self._case_summary.pack(side='top', fill='x', padx=10)
+        ttk.Button(bar, text='Apply to all tabs', padding=(6, 1),
+                   command=self._apply_case).pack(side='left', padx=(4, 0))
+        self._case_bar = bar
+
+    def _fit_case_bar(self, _event=None):
+        """Sit the case bar in the tab row, right of the tabs, while it fits.
+
+        With too little room (a narrow window, or the console open) it gets
+        its own row above the tabs instead of covering them.
+        """
+        nb, bar = self._nb, self._case_bar
+        # The notebook reports which tab is under a point: scan in from the right.
+        tabs_end = next((x for x in range(nb.winfo_width() - 1, 0, -1)
+                         if nb.identify(x, 10)), 0)
+        room = nb.winfo_width() - tabs_end - 16
+        if room >= 360:                  # 'Case:', both buttons and a usable entry
+            bar.pack_forget()
+            bar.place(in_=nb, relx=1.0, x=-4, y=2, anchor='ne', width=min(room, 560))
+            bar.lift()
+        else:
+            bar.place_forget()
+            bar.pack(side='top', fill='x', padx=6, pady=(6, 2), before=nb)
 
     def _browse_case(self):
         d = filedialog.askdirectory(title='Select a CHAPSim2 case folder')
@@ -3802,10 +3830,9 @@ class App(ttk.Window):
         case = ut.resolve_case_dirs(self.case_path.get())['case'] \
             if self.case_path.get().strip() else ''
         if not case or not os.path.isdir(case):
-            self._case_summary.configure(text='Not a directory.', foreground='orange')
             return
         self.case_path.set(case)
-        self._case_summary.configure(text=self._describe(case), foreground='')
+        self._case_entry.xview_moveto(1.0)   # a long path shows its end: the case folder
         for holder in self._holders:
             holder.realise()
             tab = holder.inner
@@ -3814,22 +3841,6 @@ class App(ttk.Window):
                     tab.adopt_case(case)
                 except Exception as exc:
                     print(f'{type(tab).__name__}: could not adopt case: {exc}')
-
-    @staticmethod
-    def _describe(case):
-        from chapsim2_toolkit import utils as ut
-        dirs = ut.resolve_case_dirs(case)
-        steps = ut.find_available_timesteps(case)
-        bits = [os.path.basename(case)]
-        bits.append(f"timesteps: {', '.join(steps)}" if steps else 'no visualisation output')
-        if os.path.isfile(os.path.join(case, 'input_chapsim.ini')):
-            bits.append('input_chapsim.ini')
-        if os.path.isdir(dirs['monitor']):
-            bits.append('3_monitor')
-        profiles = ut.find_profile_bundles(case)
-        if profiles:
-            bits.append(f'{len(profiles)} profile table(s)')
-        return '   |   '.join(bits)
 
     def show_help(self, topic='How to use'):
         """Open the Help tab, on a given topic when one is named."""
