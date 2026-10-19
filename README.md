@@ -45,15 +45,38 @@ BSD 3-Clause licence. It is developed under the
 
 ## Quick start
 
-```bash
-git clone https://github.com/weiwangstfc/CHAPSim2-toolkit.git
-cd CHAPSim2-toolkit
-pip install -e ".[gui]"
+**On a local machine:**
 
-chapsim2-gui                    # the graphical interface, on a workstation
+First, clone the code from github:
+```bash
+git clone https://github.com/CCP-NTH/CHAPSim2-toolkit.git # Clone the repo from github
+cd CHAPSim2-toolkit # Enter the toolkit directory
+```
+Second, create an environment to manage dependencies and activate it:
+```bash
+# Option 1: venv (built into Python)
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# Option 2: uv (recommended)
+uv venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# Option 3: conda (also installs the toolkit and its extras)
+conda env create -f environment.yml
+conda activate chapsim2-toolkit
+```
+Third, if not using conda, install the toolkit:
+```bash
+pip install -e ".[gui,3d]"        # venv
+uv pip install -e ".[gui,3d]"     # uv
+```
+Launch the gui (activate the environment if not already active):
+```bash
+chapsim2-gui
 ```
 
-On a cluster, use the scripts instead of the GUI. Copy the shipped
+**On a cluster**, use the scripts instead of the GUI. Copy the template
 `config.py` (in `chapsim2_toolkit/`) beside your data, edit it, and run from
 there:
 
@@ -70,14 +93,14 @@ straight from a clone. Both are supported, and a shared group checkout on a
 cluster is expected to use the clone.
 
 ```bash
-pip install -e .                  # from a clone: editable, so git pull keeps working
-pip install ".[gui,3d]"           # a normal install, with the GUI and 3D extras
-pip install -r requirements.txt   # just the dependencies, no install
-conda env create -f environment.yml
+pip install -e .                      # from a clone: editable, so git pull keeps working
+pip install ".[gui,3d]"               # a normal install, with the GUI and 3D extras
+pip install -r requirements.txt       # just the dependencies, no install
+conda env create -f environment.yml   # installation using conda
 ```
 
-**Requirements.** The scripts need only NumPy and Matplotlib, and run on
-Python 3.8 or newer. Each optional dependency is used by one part only:
+**Requirements.** Main scripts need only NumPy and Matplotlib, and run on
+Python 3.8 or newer. Optional dependencies are used by one part only:
 
 | Package | Needed by |
 |---|---|
