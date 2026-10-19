@@ -43,7 +43,7 @@ with the caveat that the toolkit is pre-1.0 and the API may still move.
   in `slice_coords`. The correlation needs `'z'` and both coordinates.
   `spectrum_direction`, `spectrum_y_coords`, `spectrum_x_coords`,
   `two_point_corr_y_coords` and `two_point_corr_x_coords` are removed (an
-  old config that sets them is told so). A run whose direction or
+  old config that sets them has them ignored). A run whose direction or
   coordinates cannot be used is refused before any data is read, so the
   mid-domain and x-averaged defaults for a blank x station no longer apply.
 - `profile_direction = 'both'` is renamed `'x & y'`; an old config that

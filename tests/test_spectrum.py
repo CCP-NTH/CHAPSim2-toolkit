@@ -469,12 +469,3 @@ def test_direction_and_coordinates_come_from_the_profile_settings():
                                        None).spectrum_computer
     assert computer.direction == 'x' and computer.y_coords == [-0.5] and computer.x_coords == [], \
         'an x spectrum takes the y coords and is given no x stations'
-
-
-def test_settings_from_an_older_config_are_reported_as_unread():
-    printed = io.StringIO()
-    module = types.SimpleNamespace(folder_path='', cases=[CASE], timesteps=['000300'],
-                                   spectrum_direction='z', spectrum_y_coords='-0.5')
-    with contextlib.redirect_stdout(printed):
-        Config.from_module(module)
-    assert 'spectrum_direction, spectrum_y_coords are no longer read' in printed.getvalue()
