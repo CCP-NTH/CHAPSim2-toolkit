@@ -142,20 +142,18 @@ class Config:
     # to every plotted case, independent of case name (see _plot_reference_data).
     mhd_NK_ref_case: str = 'Ha_6'
 
-    # 1D velocity-fluctuation energy spectra — see SpectrumComputer.
+    # 1D velocity-fluctuation energy spectra — see SpectrumComputer. Taken
+    # along profile_direction ('x' or 'z'), at the y coords in
+    # x_profile_y_coords and, for a z spectrum, the x stations in slice_coords.
     spectrum_on: bool = False
     spectrum_components: str = 'u'           # any of u/v/w, e.g. 'u' or 'u,v,w'
-    spectrum_direction: str = 'z'
-    spectrum_y_coords: str = ''
-    spectrum_x_coords: str = ''              # x stations of a z spectrum
     spectrum_kolmogorov_ref_on: bool = True  # k^-5/3 slope line on the spectrum plot
     spectrum_k_minus3_ref_on: bool = False   # k^-3 slope line on the spectrum plot
 
     # Spanwise two-point velocity correlation — see TwoPointCorrelationComputer.
+    # Needs profile_direction 'z', at the same coordinates as a z spectrum.
     two_point_corr_on: bool = False
     two_point_corr_components: str = 'uu'
-    two_point_corr_y_coords: str = ''
-    two_point_corr_x_coords: str = ''
     two_point_corr_max_sep: int = 0          # in cells; 0 -> half the spanwise domain
     two_point_corr_mean_mode: str = 't_avg'  # 't_avg' or 'snapshot'
     #: Set by load_config() to the file it read, so a saved figure can
@@ -164,6 +162,37 @@ class Config:
     # Set once apply_case_inputs has run, so a caller that applies the case
     # settings itself and then builds a loader is not told about them twice.
     case_inputs_applied: bool = False
+
+    def __post_init__(self):
+        self._check_spectral_settings()
+
+    def _check_spectral_settings(self) -> None:
+        """ Checks config for compatibility of spectral and two-point correlation stations/ directions, 
+        before any data is read. Raises ValueError if incompatible.
+        """
+        wanted = [name for name, on in (('spectra', self.spectrum_on),
+                                        ('two-point correlation', self.two_point_corr_on)) if on]
+        if not wanted:
+            return
+        direction = self.profile_direction
+        has_x = bool(str(self.slice_coords or '').strip())
+        has_y = bool(str(self.x_profile_y_coords or '').strip())
+
+        if direction not in ('x', 'z'):
+            raise ValueError(
+                f"{' and '.join(wanted)} need profile_direction 'z' (or 'x' for an x spectrum), "
+                f"not '{direction}'.")
+        if direction == 'x' and self.two_point_corr_on:
+            raise ValueError("two-point correlation is only implemented in z; "
+                             "set profile_direction = 'z'.")
+        if direction == 'z' and not (has_x and has_y):
+            raise ValueError(
+                'you must provide both x and y coordinates for two-point correlation or spectra in z '
+                '(slice_coords and x_profile_y_coords; "Slice coordinates (x)" and "(y)" in the GUI).')
+        if direction == 'x' and not has_y:
+            raise ValueError(
+                'you must provide y coordinates for spectra in x '
+                '(x_profile_y_coords; "Slice coordinates (y)" in the GUI).')
 
     @property
     def half_side(self) -> Optional[str]:
@@ -259,15 +288,10 @@ class Config:
             mhd_NK_ref_case=getattr(config_module, 'mhd_NK_ref_case', 'Ha_6'),
             spectrum_on=getattr(config_module, 'spectrum_on', False),
             spectrum_components=getattr(config_module, 'spectrum_components', 'u'),
-            spectrum_direction=getattr(config_module, 'spectrum_direction', 'z'),
-            spectrum_y_coords=getattr(config_module, 'spectrum_y_coords', ''),
-            spectrum_x_coords=getattr(config_module, 'spectrum_x_coords', ''),
             spectrum_kolmogorov_ref_on=getattr(config_module, 'spectrum_kolmogorov_ref_on', True),
             spectrum_k_minus3_ref_on=getattr(config_module, 'spectrum_k_minus3_ref_on', False),
             two_point_corr_on=getattr(config_module, 'two_point_corr_on', False),
             two_point_corr_components=getattr(config_module, 'two_point_corr_components', 'uu'),
-            two_point_corr_y_coords=getattr(config_module, 'two_point_corr_y_coords', ''),
-            two_point_corr_x_coords=getattr(config_module, 'two_point_corr_x_coords', ''),
             two_point_corr_max_sep=getattr(config_module, 'two_point_corr_max_sep', 0),
             two_point_corr_mean_mode=getattr(config_module, 'two_point_corr_mean_mode', 't_avg'),
         )
@@ -2883,11 +2907,13 @@ class TurbulenceStatsPipeline:
         # Not appended to self.statistics — see SpectrumComputer's docstring.
         self.spectrum_computer = None
         if self.config.spectrum_on:
+            direction = self.config.profile_direction
             self.spectrum_computer = SpectrumComputer(
                 self.config.folder_path,
-                self.config.spectrum_direction,
-                self.config.spectrum_y_coords,
-                self.config.spectrum_x_coords,
+                direction,
+                self.config.x_profile_y_coords,
+                # An x spectrum is averaged over z and has no x stations.
+                self.config.slice_coords if direction == 'z' else '',
                 timesteps=self.config.timesteps,
                 average_x=self.config.average_x_direction,
                 components=self.config.spectrum_components,
@@ -2899,8 +2925,8 @@ class TurbulenceStatsPipeline:
             self.corr_computer = TwoPointCorrelationComputer(
                 self.config.folder_path,
                 self.config.two_point_corr_components,
-                self.config.two_point_corr_y_coords,
-                self.config.two_point_corr_x_coords,
+                self.config.x_profile_y_coords,
+                self.config.slice_coords,
                 timesteps=self.config.timesteps,
                 max_sep=self.config.two_point_corr_max_sep,
                 mean_mode=self.config.two_point_corr_mean_mode,
@@ -3053,11 +3079,7 @@ class TurbulenceStatsPipeline:
 # PLOTTING CLASS
 # =====================================================================================================================================================
 
-#: Statistics the u_tau^2 normalisation does not apply to: already
-#: dimensionless, or carrying units of their own. Shared by the code that
-#: scales the values and the code that labels the axis - they were separate
-#: lists and drifted, so the turbulent Prandtl number was plotted correctly
-#: but captioned Pr_t/u_tau^2.
+#: Statistics the u_tau^2 normalisation does not apply to
 NOT_NORMALISED_BY_U_TAU_SQ = frozenset({
     'temperature', 'coeff_friction', 'heat_transfer_coeff', 'nusselt_number',
     'turb_prandtl', 'reynolds_ii', 'reynolds_iii', 'vorticity_ii', 'vorticity_iii',
@@ -3381,7 +3403,7 @@ class TurbulencePlotter:
                 continue
 
             # Y-direction (wall-normal) profile figures
-            if self.config.profile_direction in ('y', 'both'):
+            if self.config.profile_direction in ('y', 'x & y'):
                 # Filter out x-profile-only statistics
                 y_profile_stats = [s for s in stats_list if not getattr(s, 'x_profile_only', False)]
                 if y_profile_stats:
@@ -3390,7 +3412,7 @@ class TurbulencePlotter:
                     figures[class_name] = fig
 
             # X-direction (streamwise) profile figures
-            if self.config.profile_direction in ('x', 'both'):
+            if self.config.profile_direction in ('x', 'x & y'):
                 # Include all stats (x-profile-only ones will plot correctly)
                 class_title = class_titles.get(class_name, class_name)
                 x_fig = self._plot_x_profile_figure(stats_list, class_title)
@@ -4349,7 +4371,11 @@ def main(argv: List[str] = None):
              'to the one shipped with the toolkit)')
     args = parser.parse_args(argv)
 
-    config = load_config(args.config)
+    try:
+        config = load_config(args.config)
+    except ValueError as exc:
+        # Settings Config refuses (see Config._check_spectral_settings)
+        raise SystemExit(f'Config error: {exc}')
 
     print("="*50)
     print("TURBULENCE STATISTICS PROCESSING")

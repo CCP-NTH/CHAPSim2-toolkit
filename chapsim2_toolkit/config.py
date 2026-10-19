@@ -61,10 +61,13 @@ temp_on = False
 tke_on = False
 coeff_friction_on = False
 
-profile_direction = 'y' # 'y' (wall-normal), 'x' (streamwise), or 'both'
-slice_coords = '' # y-profiles: x coords for slices, e.g. '0.5,1.0' (blank = streamwise avg)
+profile_direction = 'y' # 'y' (wall-normal), 'x' (streamwise), 'x & y' (both),
+                        # or 'z' (spanwise: spectra and two-point correlation only, no profiles)
+slice_coords = '' # x coords: y-profile slices, and x stations of z spectra/correlation, e.g. '0.5,1.0'
+                  # (blank = streamwise avg; required for spectra/correlation in z)
 x_crop = '' # x-range crop for 2D visu data, e.g. '0.0,1.0' (blank = full x-range)
-x_profile_y_coords = '' # x-profiles: y coords for slices, e.g. '0.0,0.5' (blank = channel centreline)
+x_profile_y_coords = '' # y coords: x-profile slices, and where spectra/correlation are taken, e.g. '-0.9,0.0'
+                        # (blank = channel centreline; required for spectra/correlation)
 surface_plot_on = False # Plot 2D (y,x) surface contour maps of each statistic (requires 2D data)
 
 # Reynolds stresses
@@ -73,22 +76,20 @@ u_prime_v_prime_on = False
 w_prime_sq_on = False
 v_prime_sq_on = False
 
-# Spanwise two-point velocity correlation (needs instantaneous 3D visu data)
+# Spanwise two-point velocity correlation (needs instantaneous 3D visu data).
+# Needs profile_direction = 'z', with both slice_coords (x) and x_profile_y_coords (y) set.
 two_point_corr_on = False
 two_point_corr_components = 'uu' # pairs of u/v/w, e.g. 'uu' or 'uu,vv,ww,uv'
-two_point_corr_y_coords = '' # y coords for the R(dz) line plot, e.g. '-0.9,-0.5' (blank = no line plot)
-two_point_corr_x_coords = '' # x stations to correlate at (blank = mid-domain, or all x if average_x_direction)
 two_point_corr_max_sep = 0 # max separation in cells (0 = half the spanwise domain)
 two_point_corr_mean_mode = 't_avg' # 't_avg' (u' = u_inst - u_t_avg) or 'snapshot' (remove the snapshot's own z-mean)
 # The correlation is folded about the centreline only when half_channel_side = 'average' (symmetric channels only;
 # a warning is printed if the lower and upper walls differ)
 
-# 1D energy spectra of u', v', w' (needs instantaneous 3D visu data)
+# 1D energy spectra of u', v', w' (needs instantaneous 3D visu data).
+# Taken along profile_direction: 'z' (spanwise; needs slice_coords and x_profile_y_coords)
+# or 'x' (streamwise, averaged over z and assumes x is periodic; needs x_profile_y_coords).
 spectrum_on = False
 spectrum_components = 'u' # any of u/v/w, e.g. 'u' or 'u,v,w'
-spectrum_direction = 'z' # 'z' (spanwise) or 'x' (streamwise, assumes x is periodic)
-spectrum_y_coords = '' # y coords to take the spectrum at, e.g. '-0.9,0.0'
-spectrum_x_coords = '' # x stations of a z spectrum (blank = mid-domain, or all x if average_x_direction)
 
 # Reynolds Stress Budget terms
 re_stress_budget_on = False

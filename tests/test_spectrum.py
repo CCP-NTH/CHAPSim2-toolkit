@@ -307,8 +307,8 @@ def test_pipeline_with_average_over_timesteps():
             folder_path=str(root), input_format='visu', cases=[CASE],
             timesteps=['000300', '000400'], average_over_timesteps=True,
             ux_velocity_on=False, save_fig=False, display_fig=False,
-            spectrum_on=True, spectrum_direction='z',
-            spectrum_y_coords='-0.5, 0.5', spectrum_x_coords='2.0, 8.0',
+            spectrum_on=True, profile_direction='z',
+            x_profile_y_coords='-0.5, 0.5', slice_coords='2.0, 8.0',
         )
         config = Config.from_module(module)
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -398,7 +398,8 @@ def test_pipeline_with_instantaneous_data_type():
                 folder_path=str(root), input_format='visu', xdmf_data_type=data_type, cases=[CASE],
                 timesteps=['000300', '000400'], average_over_timesteps=True, average_z_direction=False,
                 ux_velocity_on=True, u_prime_sq_on=True, save_fig=False, display_fig=False,
-                spectrum_on=True, spectrum_y_coords='-0.5, 0.5', spectrum_x_coords='2.0', **switches,
+                spectrum_on=True, profile_direction='z',
+                x_profile_y_coords='-0.5, 0.5', slice_coords='2.0', **switches,
             )
             config = Config.from_module(module)
             printed = io.StringIO()
@@ -431,3 +432,49 @@ def test_pipeline_with_instantaneous_data_type():
         assert np.allclose(pipeline.spectrum_computer.processed_results[(CASE, 'avg')]['E']['u'][:, 0, MZ - 1],
                            0.25 * (amp_1[y_idx] ** 2 + amp_2[y_idx] ** 2)), \
             'and the spectrum is averaged over the snapshots as before'
+
+
+def test_direction_and_coordinates_come_from_the_profile_settings():
+    """Spectra and correlation have no settings of their own for these: a
+    combination they cannot use is refused before anything is read."""
+    def config(**settings):
+        module = types.SimpleNamespace(folder_path='', cases=[CASE], timesteps=['000300'], **settings)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return Config.from_module(module)
+
+    def refused(**settings):
+        try:
+            config(**settings)
+        except ValueError as exc:
+            return str(exc)
+        raise AssertionError(f'accepted {settings}')
+
+    both = dict(slice_coords='2.0', x_profile_y_coords='-0.5')
+    for switch in ('spectrum_on', 'two_point_corr_on'):
+        for direction in ('y', 'x & y'):
+            assert "need profile_direction 'z'" in refused(**{switch: True}, profile_direction=direction, **both), \
+                f"{switch} with profile_direction '{direction}'"
+        for given in ({}, {'slice_coords': '2.0'}, {'x_profile_y_coords': '-0.5'}):
+            assert 'you must provide both x and y coordinates for two-point correlation or spectra in z' \
+                in refused(**{switch: True}, profile_direction='z', **given), f'{switch} in z with only {given}'
+        config(**{switch: True}, profile_direction='z', **both)  # accepted
+
+    assert 'only implemented in z' in refused(two_point_corr_on=True, profile_direction='x', **both)
+    assert 'y coordinates for spectra in x' in refused(spectrum_on=True, profile_direction='x',
+                                                       slice_coords='2.0')
+    config(spectrum_on=True, profile_direction='x', x_profile_y_coords='-0.5')  # x stations not needed
+    config(profile_direction='z')  # and nothing is asked of a run with neither on
+
+    computer = TurbulenceStatsPipeline(config(spectrum_on=True, profile_direction='x', **both),
+                                       None).spectrum_computer
+    assert computer.direction == 'x' and computer.y_coords == [-0.5] and computer.x_coords == [], \
+        'an x spectrum takes the y coords and is given no x stations'
+
+
+def test_settings_from_an_older_config_are_reported_as_unread():
+    printed = io.StringIO()
+    module = types.SimpleNamespace(folder_path='', cases=[CASE], timesteps=['000300'],
+                                   spectrum_direction='z', spectrum_y_coords='-0.5')
+    with contextlib.redirect_stdout(printed):
+        Config.from_module(module)
+    assert 'spectrum_direction, spectrum_y_coords are no longer read' in printed.getvalue()

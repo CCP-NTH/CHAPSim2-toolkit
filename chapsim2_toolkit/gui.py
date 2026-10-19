@@ -666,16 +666,11 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         chk(s, 'Spanwise two-point correlation (requires full 3D field)',
             bv('two_point_corr_on', False))
         erow(s, 'Correlation components', sv('two_point_corr_components', 'uu'))
-        erow(s, 'Correlation y coords', sv('two_point_corr_y_coords', ''))
-        erow(s, 'Correlation x stations', sv('two_point_corr_x_coords', ''))
         erow(s, 'Corr. max sep. (cells)', sv('two_point_corr_max_sep', '0'))
         crow(s, 'Correlation mean', sv('two_point_corr_mean_mode', 't_avg'),
              ['t_avg', 'snapshot'])
         chk(s, "1D velocity energy spectrum (requires full 3D field)", bv('spectrum_on', False))
         erow(s, 'Spectrum components', sv('spectrum_components', 'u'))
-        crow(s, 'Spectrum direction', sv('spectrum_direction', 'z'), ['z', 'x'])
-        erow(s, 'Spectrum y coords', sv('spectrum_y_coords', ''))
-        erow(s, 'Spectrum x stations', sv('spectrum_x_coords', ''))
         thermal_stats_section = sec('Thermal Statistics')
         s = thermal_stats_section
         chk(s, 'Wall Heat transfer coeff.', bv('heat_transf_coeff_on', False))
@@ -696,7 +691,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
 
         # ---- Profile Options ----
         s = sec('Profile Options')
-        crow(s, 'Profile direction', sv('profile_direction', 'y'), ['y', 'x', 'both'])
+        crow(s, 'Profile direction', sv('profile_direction', 'y'), ['x', 'y', 'z', 'x & y'])
         erow(s, 'Slice coordinates (x)', sv('slice_coords', ''))
         erow(s, 'Slice coordinates (y)', sv('x_profile_y_coords', ''))
         erow(s, 'Domain crop (x)', sv('x_crop', ''))
@@ -1110,15 +1105,10 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             vorticity_anisotropy_on=v['vorticity_anisotropy_on'].get(),
             two_point_corr_on=v['two_point_corr_on'].get(),
             two_point_corr_components=v['two_point_corr_components'].get(),
-            two_point_corr_y_coords=v['two_point_corr_y_coords'].get(),
-            two_point_corr_x_coords=v['two_point_corr_x_coords'].get(),
             two_point_corr_max_sep=self._parse_int(v['two_point_corr_max_sep'].get()),
             two_point_corr_mean_mode=v['two_point_corr_mean_mode'].get(),
             spectrum_on=v['spectrum_on'].get(),
             spectrum_components=v['spectrum_components'].get(),
-            spectrum_direction=v['spectrum_direction'].get(),
-            spectrum_y_coords=v['spectrum_y_coords'].get(),
-            spectrum_x_coords=v['spectrum_x_coords'].get(),
             spectrum_kolmogorov_ref_on=v['spectrum_kolmogorov_ref_on'].get(),
             spectrum_k_minus3_ref_on=v['spectrum_k_minus3_ref_on'].get(),
         )
@@ -1213,12 +1203,10 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
                 'slice_coords': '', 'x_crop': '', 'x_profile_y_coords': '',
                 're_stress_component': 'uu11', 'vorticity_component': 'z',
                 'half_channel_side': 'lower', 'mhd_NK_ref_case': 'Ha_6',
-                'two_point_corr_components': 'uu', 'two_point_corr_y_coords': '',
-                'two_point_corr_x_coords': '', 'two_point_corr_max_sep': 0,
+                'two_point_corr_components': 'uu', 'two_point_corr_max_sep': 0,
                 'two_point_corr_mean_mode': 't_avg',
                 'output_dir': '', 'geometry': 'channel',
-                'spectrum_components': 'u', 'spectrum_direction': 'z',
-                'spectrum_y_coords': '', 'spectrum_x_coords': '',
+                'spectrum_components': 'u',
             }
             bool_fields = {
                 'thermo_on': False, 'mhd_on': False,
@@ -1372,16 +1360,11 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             '',
             f"two_point_corr_on = {v['two_point_corr_on'].get()}",
             f"two_point_corr_components = '{v['two_point_corr_components'].get()}'",
-            f"two_point_corr_y_coords = '{v['two_point_corr_y_coords'].get()}'",
-            f"two_point_corr_x_coords = '{v['two_point_corr_x_coords'].get()}'",
             f"two_point_corr_max_sep = {self._parse_int(v['two_point_corr_max_sep'].get())}",
             f"two_point_corr_mean_mode = '{v['two_point_corr_mean_mode'].get()}'",
             '',
             f"spectrum_on = {v['spectrum_on'].get()}",
             f"spectrum_components = '{v['spectrum_components'].get()}'",
-            f"spectrum_direction = '{v['spectrum_direction'].get()}'",
-            f"spectrum_y_coords = '{v['spectrum_y_coords'].get()}'",
-            f"spectrum_x_coords = '{v['spectrum_x_coords'].get()}'",
             '',
             f"heat_transf_coeff_on = {v['heat_transf_coeff_on'].get()}",
             f"Nusselt_number_on = {v['Nusselt_number_on'].get()}",
