@@ -661,8 +661,31 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         chk(s, 'Reynolds-stress anisotropy (Lumley triangle)', bv('reynolds_anisotropy_on', False))
         chk(s, 'Vorticity anisotropy (Lumley triangle, requires full 3D field)', bv('vorticity_anisotropy_on', False))
         chk(s, 'Reynolds Stress Budget terms', bv('re_stress_budget_on', False))
-        crow(s, 'Budget component', sv('re_stress_component', 'uu11'),
-             ['total', 'uu11', 'uu12', 'uu22', 'uu33'])
+        budget_component_row = crow(s, 'Budget component', sv('re_stress_component', 'uu11'),
+                                    ['total', 'uu11', 'uu12', 'uu22', 'uu33'])
+        # A tick box per budget term. Which terms apply depends on the component
+        # and the thermal/MHD switches, so only those are shown.
+        from chapsim2_toolkit.turb_stats import BudgetComputer
+        budget_terms_frame = ttk.Frame(s)
+        self._budget_terms = {name: tk.BooleanVar(value=True) for name in BudgetComputer.LABELS}
+        budget_boxes = {name: ttk.Checkbutton(budget_terms_frame, text=label, variable=self._budget_terms[name])
+                        for name, label in BudgetComputer.LABELS.items()}
+
+        def _update_budget_terms(*_args):
+            budget_terms_frame.pack_forget()
+            for box in budget_boxes.values():
+                box.grid_forget()
+            if not self.vars['re_stress_budget_on'].get():
+                return
+            budget_terms_frame.pack(fill='x', padx=(20, 0), after=budget_component_row)
+            terms = BudgetComputer.terms_for(self.vars['re_stress_component'].get(),
+                                             self.vars['thermo_on'].get(), self.vars['mhd_on'].get())
+            for i, name in enumerate(terms):
+                budget_boxes[name].grid(row=i // 2, column=i % 2, sticky='w', padx=(0, 10), pady=1)
+
+        for name in ('re_stress_budget_on', 're_stress_component', 'thermo_on', 'mhd_on'):
+            self.vars[name].trace_add('write', _update_budget_terms)
+        _update_budget_terms()
         chk(s, 'Spanwise two-point correlation (requires full 3D field)',
             bv('two_point_corr_on', False))
         erow(s, 'Correlation components', sv('two_point_corr_components', 'uu'))
@@ -1011,6 +1034,13 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         except (TypeError, ValueError):
             return default
 
+    def _selected_budget_terms(self):
+        """Ticked budget terms that apply to the chosen component and physics."""
+        from chapsim2_toolkit.turb_stats import BudgetComputer
+        v = self.vars
+        terms = BudgetComputer.terms_for(v['re_stress_component'].get(), v['thermo_on'].get(), v['mhd_on'].get())
+        return [t for t in terms if self._budget_terms[t].get()]
+
     def _build_config_obj(self):
         from chapsim2_toolkit.turb_stats import Config
         v = self.vars
@@ -1074,6 +1104,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             lorentz_force_z_on=v['lorentz_force_z_on'].get(),
             re_stress_budget_on=v['re_stress_budget_on'].get(),
             re_stress_component=v['re_stress_component'].get(),
+            re_stress_budget_terms=self._selected_budget_terms(),
             average_z_direction=v['average_z_direction'].get(),
             average_x_direction=v['average_x_direction'].get(),
             average_over_timesteps=v['average_over_timesteps'].get(),
@@ -1237,6 +1268,9 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             for name, default in bool_fields.items():
                 if name in v:
                     v[name].set(getattr(mod, name, default))
+            budget_terms = getattr(mod, 're_stress_budget_terms', None) or list(self._budget_terms)
+            for name, var in self._budget_terms.items():
+                var.set(name in budget_terms)
             v['axis_scale'].set('log' if getattr(mod, 'log_y_scale', False) else 'linear')
             if getattr(mod, 'surface_plot_on', False):
                 v['channel_plot_mode'].set('surface plot')
@@ -1357,6 +1391,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             '',
             f"re_stress_budget_on = {v['re_stress_budget_on'].get()}",
             f"re_stress_component = '{v['re_stress_component'].get()}'",
+            f"re_stress_budget_terms = {self._selected_budget_terms()}",
             '',
             f"two_point_corr_on = {v['two_point_corr_on'].get()}",
             f"two_point_corr_components = '{v['two_point_corr_components'].get()}'",

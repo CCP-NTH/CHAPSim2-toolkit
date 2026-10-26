@@ -8,11 +8,16 @@ the dataset's own budget file.
 Code assumes homogeneity in x and z directions.
 """
 
+import contextlib
+import io
+import types
 from pathlib import Path
 
 import numpy as np
 
 from chapsim2_toolkit import operations as op
+from chapsim2_toolkit import utils as ut
+from chapsim2_toolkit.turb_stats import BudgetComputer, Config
 
 DATA = Path(__file__).parent / "reference_data" / "Chan180_FD2_all"
 
@@ -173,3 +178,84 @@ def test_ruu_budget_matches_chan180():
         rmax = np.abs(reference[s]).max()
         assert err <= tolerance * rmax + 1e-9, \
             f"{name}: max|err| = {err:.3e} against a peak of {rmax:.3e}"
+
+
+# ── term selection and the Joule split, on synthetic profiles ─────────────────
+NY = 24
+N_STUART = 0.4
+
+
+def mhd_profiles(seed=0):
+    """Every variable a budget can read, as random wall-normal profiles."""
+    rng = np.random.default_rng(seed)
+    return {name: rng.standard_normal(NY) for name in ut._BASE_REQUIRED_VARS}
+
+
+def budget(terms, component='total', raw=None):
+    """A BudgetComputer for an MHD case, run once on `raw`; returns it and what it printed."""
+    config = Config.from_module(types.SimpleNamespace(
+        cases=['c'], timesteps=['1'], Re=[180.0], mhd_on=True, stuart_number=N_STUART,
+        re_stress_budget_on=True, re_stress_component=component, re_stress_budget_terms=terms,
+        average_x_direction=True, average_z_direction=True))
+    loader = types.SimpleNamespace(get_raw_dict=lambda case, ts: raw or mhd_profiles(),
+                                   y_coords=np.linspace(-1.0, 1.0, NY))
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        computer = BudgetComputer(config)
+        computer.compute_for_case('c', '1', loader)
+    return computer, printed.getvalue()
+
+
+def test_joule_dissipation_is_the_u_cross_b_work():
+    """J_ij against N(<u'_i f_j> + <u'_j f_i>), f = (u' x B) x B, from velocity samples."""
+    rng = np.random.default_rng(1)
+    u = rng.standard_normal((5000, 3)) @ rng.standard_normal((3, 3))      # correlated fluctuations
+    B = np.array([0.3, 0.8, -0.5])                                          # any field, not a unit one
+    f = np.cross(np.cross(u, B), B)
+    work = N_STUART * (u.T @ f + f.T @ u) / len(u)
+    d = {'reynolds_stress_tensor': u.T @ u / len(u)}
+    for c, (i, j) in {'uu11': (0, 0), 'uu12': (0, 1), 'uu13': (0, 2), 'uu22': (1, 1), 'uu33': (2, 2)}.items():
+        assert np.isclose(op.compute_joule_dissipation(B, N_STUART, d, c)[f'joule_{c}'], work[i, j]), c
+    assert np.isclose(op.compute_joule_dissipation(B, N_STUART, d)['joule'], 0.5 * np.trace(work)), \
+        'the TKE takes half the trace, like the other terms'
+
+
+def test_joule_split_of_the_lorentz_term():
+    with contextlib.redirect_stdout(io.StringIO()):
+        d = op.compute_budget_components(mhd_profiles(), np.linspace(-1.0, 1.0, NY), average_z=True, average_x=True)
+    R, B = d['reynolds_stress_tensor'], [0.0, 1.0, 0.0]                    # a wall-normal field
+    joule = {}
+    for c in ('total', 'uu11', 'uu12', 'uu22', 'uu33'):
+        lorentz = next(iter(op.compute_mhd_term(B, N_STUART, d, c).values()))
+        joule[c] = next(iter(op.compute_joule_dissipation(B, N_STUART, d, c).values()))
+        potential = op.compute_electric_potential_term(B, N_STUART, d, c)['electric_potential']
+        assert np.allclose(joule[c] + potential, lorentz), f'{c}: Joule + electric potential = Lorentz term'
+    assert np.allclose(joule['uu11'], -2 * N_STUART * R[0, 0]) and np.allclose(joule['uu33'], -2 * N_STUART * R[2, 2])
+    assert np.allclose(joule['uu22'], 0.0), 'nothing is damped along the field'
+    assert np.allclose(joule['uu12'], -N_STUART * R[0, 1])
+    assert np.allclose(joule['total'], -N_STUART * (R[0, 0] + R[2, 2])), "TKE: -N <|u' x B|^2>"
+
+
+def test_budget_plots_only_the_selected_terms():
+    computer, _ = budget(['joule', 'dissipation', 'balance'])
+    assert computer.terms == ['dissipation', 'joule', 'balance'], 'the selection, in plotting order'
+    raw = computer.raw_results
+    assert np.allclose(raw['balance'][('c', '1')], raw['dissipation'][('c', '1')] + raw['joule'][('c', '1')]), \
+        'the balance sums the selected terms'
+
+    for component in ('total', 'uu11'):
+        everything, _ = budget(None, component=component)
+        assert everything.terms == BudgetComputer.terms_for(component, False, True), 'no selection means every term'
+        assert {'joule', 'electric_potential'} <= set(everything.terms), f'{component}: the Lorentz term is split'
+    assert budget('dissipation, balance')[0].terms == ['dissipation', 'balance'], 'a string list works too'
+
+    skipped, printed = budget(['joule', 'buoyancy'], component='uu11')
+    assert skipped.terms == ['joule'] and "'buoyancy' is not a term of this uu11 budget" in printed, \
+        'a term this budget does not have (buoyancy without thermal statistics) is named and skipped'
+
+    no_currents = {k: v for k, v in mhd_profiles().items() if not k.startswith('ju')}
+    unavailable, _ = budget(['joule', 'electric_potential'], raw=no_currents)
+    assert np.all(np.isnan(unavailable.raw_results['electric_potential'][('c', '1')])), \
+        'without <u_i j_l> the electric potential term is marked unavailable, not shown as -J'
+    assert not np.any(np.isnan(unavailable.raw_results['joule'][('c', '1')])), \
+        'while the Joule dissipation needs only the Reynolds stresses'

@@ -142,6 +142,9 @@ class Config:
     # to every plotted case, independent of case name (see _plot_reference_data).
     mhd_NK_ref_case: str = 'Ha_6'
 
+    # Reynolds stress budget terms to plot (None/empty = all) - see BudgetComputer.terms_for.
+    re_stress_budget_terms: Optional[List[str]] = None
+
     # 1D velocity-fluctuation energy spectra — see SpectrumComputer. Taken
     # along profile_direction ('x' or 'z'), at the y coords in
     # x_profile_y_coords and, for a z spectrum, the x stations in slice_coords.
@@ -247,6 +250,7 @@ class Config:
             surface_plot_on=getattr(config_module, 'surface_plot_on', False),
             re_stress_budget_on=getattr(config_module, 're_stress_budget_on', False),
             re_stress_component=getattr(config_module, 're_stress_component', 'total'),
+            re_stress_budget_terms=getattr(config_module, 're_stress_budget_terms', None),
             average_z_direction=getattr(config_module, 'average_z_direction', True),
             average_x_direction=getattr(config_module, 'average_x_direction', False),
             norm_by_u_tau_sq=getattr(config_module, 'norm_by_u_tau_sq', False),
@@ -338,11 +342,11 @@ class PlotConfig:
                 'mean_convection': '#2ca02c',
                 'viscous_diffusion': '#ff7f0e',
                 'pressure_transport': '#9467bd',
-                'turbulent_diffusion': '#17becf',
                 'buoyancy': '#e377c2',
-                'mhd': '#8c564b',
+                'joule': '#8c564b',
+                'electric_potential': '#c49c94',
                 'pressure_strain': '#bcbd22',
-                'turbulent_convection': '#7f7f7f',
+                'turbulent_diffusion': '#7f7f7f',
                 'pressure_force': '#9467bd',
                 'buoyancy_force': '#e377c2',
                 'lorentz_force': '#8c564b',
@@ -1810,20 +1814,37 @@ class Budget(ABC):
 
 class BudgetComputer:
     """
-    Computes all budget terms by calling op.compute_budget_components once
-    and then extracting individual terms via op.compute_* functions.
+    Computes the selected Reynolds stress budget terms by calling
+    op.compute_budget_components once and then extracting each term via the
+    op.compute_* functions. The balance is the sum of the selected terms.
     """
 
-    # Registry mapping config flags to (op function, key in result dict)
-    TERM_REGISTRY = {
-        'production_on':          ('production',          'Production'),
-        'dissipation_on':         ('dissipation',         'Dissipation'),
-        'convection_on':          ('mean_convection',     'Mean Convection'),
-        'viscous_diffusion_on':   ('viscous_diffusion',   'Viscous Diffusion'),
-        'pressure_transport_on':  ('pressure_transport',  'Pressure Transport'),
-        'turbulent_diffusion_on': ('turbulent_convection','Turbulent Diffusion'),
-        'pressure_strain_on':     ('pressure_strain',     'Pressure Strain'),
+    LABELS = {
+        'production': 'Production',
+        'dissipation': 'Dissipation',
+        'mean_convection': 'Mean Convection',
+        'viscous_diffusion': 'Viscous Diffusion',
+        'pressure_transport': 'Pressure Transport',
+        'turbulent_diffusion': 'Turbulent Diffusion',
+        'pressure_strain': 'Pressure Strain',
+        'buoyancy': 'Buoyancy',
+        'joule': 'Joule Dissipation',
+        'electric_potential': 'Electric Potential',
+        'balance': 'Balance',
     }
+
+    @staticmethod
+    def terms_for(component: str, thermo_on: bool, mhd_on: bool) -> List[str]:
+        """The terms of `component`'s budget, in plotting order. With MHD on,
+        the Lorentz term is split into its Joule dissipation (u' x B part)
+        and electric potential parts."""
+        terms = ['production', 'dissipation', 'mean_convection', 'viscous_diffusion',
+                 'pressure_transport', 'turbulent_diffusion', 'pressure_strain']
+        if thermo_on:
+            terms.append('buoyancy')
+        if mhd_on:
+            terms += ['joule', 'electric_potential']
+        return terms + ['balance']
 
     def __init__(self, config: Config):
         self.config = config
@@ -1831,26 +1852,20 @@ class BudgetComputer:
         self.average_z = config.average_z_direction
         self.average_x = config.average_x_direction
 
-        # Determine which terms are enabled
-        self.enabled_terms = []
-        if config.re_stress_budget_on:
-            self.enabled_terms = [
-                (flag, term_name, label)
-                for flag, (term_name, label) in self.TERM_REGISTRY.items()
-            ]
-            if config.thermo_on:
-                self.enabled_terms.append(('buoyancy_on', 'buoyancy', 'Buoyancy'))
-            if config.mhd_on:
-                self.enabled_terms.append(('mhd_on', 'mhd', 'MHD (Lorentz)'))
-            self.enabled_terms.append(('balance', 'balance', 'Balance'))
+        # The selected terms, or every term when none are listed.
+        available = self.terms_for(self.uiuj, config.thermo_on, config.mhd_on)
+        selected = config.re_stress_budget_terms or available
+        if isinstance(selected, str):                  # 'dissipation, joule' as well as a list
+            selected = selected.replace(',', ' ').split()
+        for term in selected:
+            if term not in available:
+                print(f"Reynolds stress budget: '{term}' is not a term of this {self.uiuj} budget; "
+                      f"skipped (terms: {', '.join(available)}).")
+        self.terms = [term for term in available if term in selected]
 
         # Storage: {term_name: {(case, timestep): array}}
-        self.raw_results: Dict[str, Dict[Tuple[str, str], np.ndarray]] = {
-            t[1]: {} for t in self.enabled_terms
-        }
-        self.processed_results: Dict[str, Dict[Tuple[str, str], np.ndarray]] = {
-            t[1]: {} for t in self.enabled_terms
-        }
+        self.raw_results: Dict[str, Dict[Tuple[str, str], np.ndarray]] = {t: {} for t in self.terms}
+        self.processed_results: Dict[str, Dict[Tuple[str, str], np.ndarray]] = {t: {} for t in self.terms}
 
     def compute_for_case(self, case: str, timestep: str, data_loader) -> bool:
         """Compute all enabled budget terms for one case/timestep."""
@@ -1883,9 +1898,10 @@ class BudgetComputer:
             'viscous_diffusion':   lambda d: op.compute_viscous_diffusion(Re, d, self.uiuj),
             'pressure_transport':  lambda d: op.compute_pressure_transport(d, self.uiuj, u_ref),
             'pressure_strain':     lambda d: op.compute_pressure_strain(d, self.uiuj, u_ref),
-            'turbulent_convection':lambda d: op.compute_turbulent_convection(d, self.uiuj),
+            'turbulent_diffusion': lambda d: op.compute_turbulent_convection(d, self.uiuj),
             'buoyancy':            lambda d: op.compute_buoyancy_term(self.config.gravity_direction, u_ref, l_ref, d, self.uiuj),
-            'mhd':                 lambda d: op.compute_mhd_term(self.config.mag_field_direction, self.config.stuart_number, d, self.uiuj),
+            'joule':               lambda d: op.compute_joule_dissipation(self.config.mag_field_direction, self.config.stuart_number, d, self.uiuj),
+            'electric_potential':  lambda d: op.compute_electric_potential_term(self.config.mag_field_direction, self.config.stuart_number, d, self.uiuj),
         }
 
         # A term whose inputs the run did not write comes out identically
@@ -1894,7 +1910,7 @@ class BudgetComputer:
         # so it is marked unavailable and the plotter leaves it out.
         inputs_missing = bool(budget_comp.get('_missing'))
 
-        for _flag, term_name, _label in self.enabled_terms:
+        for term_name in self.terms:
             if term_name == 'balance':
                 continue
             result = _compute_fns[term_name](budget_comp)
@@ -1908,7 +1924,7 @@ class BudgetComputer:
             self.raw_results[term_name][(case, timestep)] = value
 
         balance_val = None
-        for _flag, term_name, _label in self.enabled_terms:
+        for term_name in self.terms:
             if term_name == 'balance':
                 continue
             val = self.raw_results[term_name].get((case, timestep))
@@ -1917,7 +1933,7 @@ class BudgetComputer:
             if np.all(np.isnan(np.asarray(val, dtype=float))):
                 continue        # unavailable, not zero: leave it out of the sum
             balance_val = val if balance_val is None else balance_val + val
-        if balance_val is not None:
+        if balance_val is not None and 'balance' in self.terms:
             self.raw_results['balance'][(case, timestep)] = balance_val
 
         return True
@@ -2889,8 +2905,8 @@ class TurbulenceStatsPipeline:
         self.budget_computer = None
         if re_stress_budget_enabled:
             self.budget_computer = BudgetComputer(self.config)
-            for _flag, term_name, label in self.budget_computer.enabled_terms:
-                self.statistics.append(BudgetTerm(term_name, label, self.budget_computer))
+            for term_name in self.budget_computer.terms:
+                self.statistics.append(BudgetTerm(term_name, BudgetComputer.LABELS[term_name], self.budget_computer))
 
         self.force_computer = None
         if self.config.body_force_on:

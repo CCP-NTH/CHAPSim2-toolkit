@@ -1079,6 +1079,31 @@ def compute_mhd_term(mag_field_direction, stuart_number, tke_comp_dict, uiuj='to
         term2 = np.einsum('l,l...->...', C[ii], U_J[jj])
         return {f'mhd_{uiuj}': N * (term1 + term2)}
 
+
+def compute_joule_dissipation(mag_field_direction, stuart_number, tke_comp_dict, uiuj='total'):
+    """
+    Joule dissipation: the u' x B part of the Lorentz term (Ohm's law
+    j' = -grad(phi') + u' x B), which damps velocity perpendicular to B:
+        J_ij = N (B_j B_k <u'_i u'_k> + B_i B_k <u'_j u'_k> - 2 |B|^2 <u'_i u'_j>)
+    For the TKE (half the trace) this is -N <|u' x B|^2>.
+    """
+    B = np.asarray(mag_field_direction, dtype=float)
+    R = tke_comp_dict['reynolds_stress_tensor']           # <u'_i u'_j>, (3, 3, ...)
+    RB = np.einsum('ik...,k->i...', R, B)                  # <u'_i u'_k> B_k
+    if uiuj == 'total':
+        return {'joule': stuart_number * (np.einsum('i...,i->...', RB, B) - (B @ B) * np.trace(R))}
+    i, j = _parse_component(uiuj)
+    return {f'joule_{uiuj}': stuart_number * (B[j] * RB[i] + B[i] * RB[j] - 2.0 * (B @ B) * R[i, j])}
+
+
+def compute_electric_potential_term(mag_field_direction, stuart_number, tke_comp_dict, uiuj='total'):
+    """The rest of the Lorentz term, M_ij - J_ij: the part carried by the electric potential fluctuation."""
+    lorentz = next(iter(compute_mhd_term(mag_field_direction, stuart_number, tke_comp_dict, uiuj).values()))
+    if not np.any(lorentz):
+        return {'electric_potential': lorentz}    # Lorentz inputs absent: leave it unavailable, not -J
+    joule = next(iter(compute_joule_dissipation(mag_field_direction, stuart_number, tke_comp_dict, uiuj).values()))
+    return {'electric_potential': lorentz - joule}
+
 # =====================================================================================================================================================
 # Normalisation & Averaging functions
 # =====================================================================================================================================================

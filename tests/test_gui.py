@@ -234,6 +234,8 @@ def test_settings_survive_a_round_trip_through_a_config_file():
         tab.vars['spectrum_components'].set('u,w')
         tab.vars['spectrum_k_minus3_ref_on'].set(True)
         tab.vars['xdmf_data_type'].set('inst')
+        for name, var in tab._budget_terms.items():
+            var.set(name in ('dissipation', 'balance'))
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, 'config.py')
@@ -249,6 +251,7 @@ def test_settings_survive_a_round_trip_through_a_config_file():
                 tab.vars['spectrum_components'].set('u')
                 tab.vars['spectrum_k_minus3_ref_on'].set(False)
                 tab.vars['xdmf_data_type'].set('tsp_avg')
+                tab._budget_terms['production'].set(True)
 
                 tab._load_cfg()
                 _no_complaint(boxes)
@@ -259,6 +262,21 @@ def test_settings_survive_a_round_trip_through_a_config_file():
             assert tab.vars['spectrum_components'].get() == 'u,w'
             assert tab.vars['spectrum_k_minus3_ref_on'].get() is True
             assert tab.vars['xdmf_data_type'].get() == 'inst'
+            assert tab._selected_budget_terms() == ['dissipation', 'balance']
+
+
+def test_budget_tick_boxes_choose_the_terms():
+    """Only ticked terms the chosen budget has reach the config."""
+    gui = _gui()
+    with _tab(gui.TurbStatsTab) as tab:
+        tab.vars['re_stress_component'].set('uu11')
+        for name, var in tab._budget_terms.items():
+            var.set(name in ('dissipation', 'joule', 'buoyancy', 'balance'))
+        assert tab._build_config_obj().re_stress_budget_terms == ['dissipation', 'balance'], \
+            'Joule and buoyancy need MHD and thermal statistics on'
+        tab.vars['mhd_on'].set(True)
+        assert tab._build_config_obj().re_stress_budget_terms == ['dissipation', 'joule', 'balance'], \
+            'with MHD on, every component has the Joule term'
 
 
 def test_the_config_it_writes_is_one_turb_stats_can_read():

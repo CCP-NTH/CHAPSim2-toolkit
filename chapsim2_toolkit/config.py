@@ -94,6 +94,9 @@ spectrum_components = 'u' # any of u/v/w, e.g. 'u' or 'u,v,w'
 # Reynolds Stress Budget terms
 re_stress_budget_on = False
 re_stress_component = 'uu11' # 'total' or 'uu11', 'uu12' etc. for individual components
+re_stress_budget_terms = [] # terms to plot, e.g. ['dissipation', 'joule'] (empty = all): production, dissipation,
+# mean_convection, viscous_diffusion, pressure_transport, turbulent_diffusion, pressure_strain, buoyancy (thermal),
+# joule and electric_potential (MHD: the two parts of the Lorentz term), balance (sum of the selected terms)
 
 # thermo statistics
 heat_transf_coeff_on = False # x profile only
