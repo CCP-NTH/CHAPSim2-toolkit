@@ -105,7 +105,7 @@ def test_ruu_budget_matches_chan180():
 
     # Laplacian of Reynolds stresses: d²<u'_i u'_j>/dy² (only y matters)
     lap_re_stress_x2 = np.zeros((3, 3, N))
-    lap_re_stress_x2[0, 0] = op.second_derivative(uu, y_c, axis=0)
+    lap_re_stress_x2[0, 0] = op.second_derivative(uu, y_c, axis=0, walls=(0.0, None))  # wall, then centreline
 
     # Pressure-velocity fluctuation gradient: d<p'u'_i>/dx_j (only y nonzero)
     press_vel_grad = np.zeros((3, 3, N))
@@ -173,6 +173,10 @@ def test_ruu_budget_matches_chan180():
         ("Pressure transport",  press_trans,  ref_pdiff,   1e-3),
         ("Pressure strain",     press_strain, ref_pstrain, 1e-3),
     ]
+    # The wall, where <u'u'> vanishes, is the third point of the stencil in the
+    # cell next to it, so viscous diffusion holds up there too, balancing the
+    # dissipation. It came out as exactly zero when that cell extrapolated linearly.
+    assert np.allclose(visc_diff[:2], ref_visc[:2], rtol=5e-3), (visc_diff[:2], ref_visc[:2])
     for name, computed, reference, tolerance in terms:
         err  = np.abs(computed[s] - reference[s]).max()
         rmax = np.abs(reference[s]).max()
@@ -259,3 +263,24 @@ def test_budget_plots_only_the_selected_terms():
         'without <u_i j_l> the electric potential term is marked unavailable, not shown as -J'
     assert not np.any(np.isnan(unavailable.raw_results['joule'][('c', '1')])), \
         'while the Joule dissipation needs only the Reynolds stresses'
+
+
+def test_streamwise_derivatives_use_the_x_grid():
+    """A developing (inlet/outlet) flow is differentiated along x: per unit length, not per grid index."""
+    x = np.linspace(0.0, 10.0, 41) ** 1.2                                  # a stretched x grid
+    y = np.linspace(-1.0, 1.0, NY)
+    raw = {name: np.ones((NY, len(x))) for name in ut._BASE_REQUIRED_VARS}
+    raw['pr'] = -3.0 * np.tile(x, (NY, 1))                                # mean pressure falling along x
+    raw['pru1'] = raw['pr'] * raw['u1'] + 0.5 * np.tile(x, (NY, 1))       # <p'u'> = x/2
+    with contextlib.redirect_stdout(io.StringIO()):
+        budget = op.compute_budget_components(raw, y, x_coords=x)
+        force = op.compute_force_components(raw, y, x_coords=x)
+    assert np.allclose(budget['press_velocity_fluc_grad_tensor'][0, 0], 0.5), "d<p'u'>/dx"
+    assert np.allclose(force['pr_grad'][0], -3.0), 'd<p>/dx'
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            op.compute_budget_components(raw, y)
+    except ValueError as exc:
+        assert 'x_coords' in str(exc)
+    else:
+        raise AssertionError('without the x grid it must not fall back to index spacing')

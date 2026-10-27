@@ -182,63 +182,31 @@ def interpolate_cell_to_point_data(data):
     else:
         raise ValueError(f"Unsupported number of dimensions: {ndim}")
 
-def second_derivative(f, y, axis=0):
-    """Second derivative on a non-uniform y mesh. Operates along *axis* (default 0).
+def second_derivative(f, y, axis=0, walls=(None, None)):
+    """Second derivative on a non-uniform y mesh, along *axis* (default 0).
 
-    Boundary cells extend the same non-uniform 3-point stencil using the
-    wall value from interpolate_wall_point (linear extrapolation from the
-    two nearest cells) as the missing third point, instead of assuming
-    zero curvature gradient at the wall.
+    walls: the (lower, upper) positions of no-slip walls, where f vanishes as
+    every Reynolds stress does. The cell next to one takes the wall as the
+    third point of its stencil. An end without a wall (a pipe's axis, or none
+    given) takes the curvature of its three nearest cells.
     """
+    f = np.moveaxis(np.asarray(f, dtype=float), axis, 0)
+    y = np.asarray(y, dtype=float)
+    lower, upper = walls
+    if lower is not None:
+        f, y = np.concatenate([np.zeros_like(f[:1]), f]), np.concatenate([[lower], y])
+    if upper is not None:
+        f, y = np.concatenate([f, np.zeros_like(f[:1])]), np.concatenate([y, [upper]])
+
+    shape = (-1,) + (1,) * (f.ndim - 1)
+    h1, h2 = np.diff(y)[:-1].reshape(shape), np.diff(y)[1:].reshape(shape)
     d2f = np.empty_like(f)
-    h = np.diff(y)
-    h1 = h[:-1]  # left spacing
-    h2 = h[1:]   # right spacing
+    d2f[1:-1] = 2 * (f[2:] * h1 - f[1:-1] * (h1 + h2) + f[:-2] * h2) / (h1 * h2 * (h1 + h2))
+    d2f[0], d2f[-1] = d2f[1], d2f[-2]
 
-    # Build generic slicers for the requested axis
-    def _sl(s):
-        idx = [slice(None)] * f.ndim
-        idx[axis] = s
-        return tuple(idx)
-
-    # Broadcast h1, h2 to the correct axis
-    shape = [1] * f.ndim
-    shape[axis] = -1
-    h1b = h1.reshape(shape)
-    h2b = h2.reshape(shape)
-
-    d2f[_sl(slice(1, -1))] = (
-        2 * (f[_sl(slice(2, None))] * h1b
-             - f[_sl(slice(1, -1))] * (h1b + h2b)
-             + f[_sl(slice(None, -2))] * h2b)
-        / (h1b * h2b * (h1b + h2b))
-    )
-
-    # Boundaries: interpolate_wall_point assumes the wall-normal direction
-    # is axis 0, so bring the requested axis to the front for that call only.
-    f_axis0 = np.moveaxis(f, axis, 0)
-    f_wall_lo = np.expand_dims(interpolate_wall_point(f_axis0, y_coords=y, wall='lower'), axis)
-    f_wall_hi = np.expand_dims(interpolate_wall_point(f_axis0, y_coords=y, wall='upper'), axis)
-
-    y_wall_lo = y[0] - 0.5 * (y[1] - y[0])
-    y_wall_hi = y[-1] + 0.5 * (y[-1] - y[-2])
-
-    hL1, hL2 = y[0] - y_wall_lo, y[1] - y[0]
-    hU1, hU2 = y[-1] - y[-2], y_wall_hi - y[-1]
-
-    d2f[_sl(slice(0, 1))] = (
-        2 * (f[_sl(slice(1, 2))] * hL1
-             - f[_sl(slice(0, 1))] * (hL1 + hL2)
-             + f_wall_lo * hL2)
-        / (hL1 * hL2 * (hL1 + hL2))
-    )
-    d2f[_sl(slice(-1, None))] = (
-        2 * (f_wall_hi * hU1
-             - f[_sl(slice(-1, None))] * (hU1 + hU2)
-             + f[_sl(slice(-2, -1))] * hU2)
-        / (hU1 * hU2 * (hU1 + hU2))
-    )
-    return d2f
+    # Drop the wall points again: only the cells are returned.
+    d2f = d2f[(lower is not None):len(d2f) - (upper is not None)]
+    return np.moveaxis(d2f, 0, axis)
 
 INST_TO_TAVG_VAR = {
     'qx_ccc':   't_avg_u1',
@@ -540,7 +508,8 @@ def compute_turb_Prandtl_number(ux, uy, uv, T, Tuy, y_coords):
 # Reynolds Stress Budget terms functions
 # =====================================================================================================================================================
 
-def compute_budget_components(xdmf_data_dict, y_coords, average_z=False, average_x=False):
+def compute_budget_components(xdmf_data_dict, y_coords, average_z=False, average_x=False,
+                              x_coords=None, z_coords=None, y_walls=(None, None)):
     """
     Compute TKE budget term components from XDMF data.
     Naming convention: 1,2,3 are x,y,z. 'prime' denotes fluctuating component.
@@ -555,6 +524,10 @@ def compute_budget_components(xdmf_data_dict, y_coords, average_z=False, average
         y_coords: 1D array of y cell-centre coordinates
         average_z: True if z has been averaged out (data is 2D or 1D)
         average_x: True if x has been averaged out (data is 1D)
+        x_coords, z_coords: x and z cell-centre coordinates, needed for the
+            directions the data still has
+        y_walls: (lower, upper) no-slip wall positions (see wall_positions),
+            where the Reynolds stresses vanish; None for an end with no wall
 
     Returns:
         dict: Dictionary containing all TKE budget tensors
@@ -572,7 +545,9 @@ def compute_budget_components(xdmf_data_dict, y_coords, average_z=False, average
         axis = field_axes(field, average_x, average_z)['x']
         if axis is None:
             return np.zeros_like(field)
-        return np.gradient(field, axis=axis)
+        if x_coords is None:
+            raise ValueError('An x derivative needs x_coords (the x cell centres).')
+        return np.gradient(field, x_coords, axis=axis)
 
     def grad_y(field):
         if field is None:
@@ -588,17 +563,16 @@ def compute_budget_components(xdmf_data_dict, y_coords, average_z=False, average
         axis = field_axes(field, average_x, average_z)['z']
         if axis is None:
             return np.zeros_like(field)
-        return np.gradient(field, axis=axis)
+        if z_coords is None:
+            raise ValueError('A z derivative needs z_coords (the z cell centres).')
+        return np.gradient(field, z_coords, axis=axis)
 
     def lap_y(field):
         """Second derivative in y on a stretched mesh."""
         if field is None:
             return None
-        if field.ndim == 1:
-            return second_derivative(field, y_coords, axis=0)
-        if average_z:  # 2D
-            return second_derivative(field, y_coords, axis=0)
-        return second_derivative(field, y_coords, axis=1)  # 3D
+        return second_derivative(field, y_coords, axis=field_axes(field, average_x, average_z)['y'],
+                                 walls=y_walls)
 
     # ------------------------------------------------------------------
     # Variable lookup (prefixes already stripped by reader)
@@ -1304,7 +1278,8 @@ def analytical_laminar_mhd_prof(case, Re_ref, Re_tau):
 # Body Force Analysis
 # =====================================================================================================================================================
 
-def compute_force_components(xdmf_data_dict, y_coords, average_z=False, average_x=False):
+def compute_force_components(xdmf_data_dict, y_coords, average_z=False, average_x=False,
+                             x_coords=None, z_coords=None):
     """
     Gather the mean-field quantities needed for mean-momentum body-force
     analysis (pressure, buoyancy, Lorentz) from XDMF data.
@@ -1320,6 +1295,8 @@ def compute_force_components(xdmf_data_dict, y_coords, average_z=False, average_
         y_coords: 1D array of y cell-centre coordinates
         average_z: True if z has been averaged out (data is 2D or 1D)
         average_x: True if x has been averaged out (data is 1D)
+        x_coords, z_coords: x and z cell-centre coordinates, needed for the
+            directions the data still has
 
     Returns:
         dict with the raw mean fields ('pr', 'f', 'j') and the mean
@@ -1340,7 +1317,9 @@ def compute_force_components(xdmf_data_dict, y_coords, average_z=False, average_
         axis = field_axes(field, average_x, average_z)['x']
         if axis is None:
             return np.zeros_like(field)
-        return np.gradient(field, axis=axis)
+        if x_coords is None:
+            raise ValueError('An x derivative needs x_coords (the x cell centres).')
+        return np.gradient(field, x_coords, axis=axis)
 
     def grad_y(field):
         if field is None:
@@ -1356,7 +1335,9 @@ def compute_force_components(xdmf_data_dict, y_coords, average_z=False, average_
         axis = field_axes(field, average_x, average_z)['z']
         if axis is None:
             return np.zeros_like(field)
-        return np.gradient(field, axis=axis)
+        if z_coords is None:
+            raise ValueError('A z derivative needs z_coords (the z cell centres).')
+        return np.gradient(field, z_coords, axis=axis)
 
     pr = get_var('pr')
     dens = get_var('f')

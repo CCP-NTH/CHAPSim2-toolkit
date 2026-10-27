@@ -929,8 +929,9 @@ class TurbulenceXDMFData:
 
             if self.z_coords is None and grid_info:
                 z_nodes = grid_info.get('grid_z', None)
-                if z_nodes is not None and sample.ndim == 3:
-                    nz = sample.shape[0]  # (nz, ny, nx)
+                if z_nodes is not None and (sample.ndim == 3 or (sample.ndim == 2 and self.average_x
+                                                                  and not self.average_z)):
+                    nz = sample.shape[0]  # (nz, ny, nx), or (nz, ny) with x averaged out
                     if len(z_nodes) == nz + 1:
                         self.z_coords = 0.5 * (z_nodes[:-1] + z_nodes[1:])
                     elif len(z_nodes) == nz:
@@ -1882,7 +1883,10 @@ class BudgetComputer:
         # Compute all TKE components once
         budget_comp = op.compute_budget_components(
             raw_dict, y_coords,
-            average_z=self.average_z, average_x=self.average_x
+            average_z=self.average_z, average_x=self.average_x,
+            x_coords=getattr(data_loader, 'x_coords', None), z_coords=getattr(data_loader, 'z_coords', None),
+            y_walls=op.wall_positions(y_coords, self.config.geometry,
+                                      getattr(data_loader, 'grid_info', {}).get('grid_y')),
         )
 
         # Get the correct Re, reference velocity and length for this case
@@ -2017,7 +2021,8 @@ class ForceComputer:
 
         force_comp = op.compute_force_components(
             raw_dict, y_coords,
-            average_z=self.average_z, average_x=self.average_x
+            average_z=self.average_z, average_x=self.average_x,
+            x_coords=getattr(data_loader, 'x_coords', None), z_coords=getattr(data_loader, 'z_coords', None),
         )
 
         u_ref = float(op.get_ref_Re(case, self.config.cases, self.config.ref_bulk_velocity))
