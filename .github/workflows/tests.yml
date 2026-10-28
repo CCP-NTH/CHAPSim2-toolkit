@@ -12,10 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The oldest version setup.py claims, and a current one. NumPy 2.0
-        # renamed trapz to trapezoid, so the two ends of this range exercise
-        # genuinely different library behaviour.
-        python-version: ['3.9', '3.12']
+        # The oldest version pyproject.toml claims, and a current one. Quoted:
+        # unquoted, YAML reads 3.10 as the number 3.1.
+        python-version: ['3.10', '3.12']
 
     steps:
       - uses: actions/checkout@v4
@@ -30,11 +29,8 @@ jobs:
           python -m pip install --upgrade pip
           # pyvista is only needed by the 3D rendering, which no test drives.
           # ttkbootstrap is needed: the GUI tests below build real widgets.
-          # It is only installable on 3.10+, so on 3.9 those tests skip -
-          # which is the truth about the GUI, not a gap in the testing.
           # pandas is in install_requires and thermal_BC_calc needs it.
-          pip install numpy matplotlib pandas pytest \
-                      "ttkbootstrap>=2.0.0; python_version>='3.10'"
+          pip install numpy matplotlib pandas pytest "ttkbootstrap>=2.0.0"
 
       - name: Install a virtual display for the GUI tests
         run: sudo apt-get update && sudo apt-get install -y xvfb
@@ -72,11 +68,7 @@ jobs:
                         thermal_BC_calc provenance; do
             python -c "import chapsim2_toolkit.$module" || exit 1
           done
-          # gui needs ttkbootstrap, which is not installable on every version
-          # in the matrix. Checked where it is.
-          python -c "import ttkbootstrap" 2>/dev/null \
-            && python -c "import chapsim2_toolkit.gui" \
-            || echo "skipped gui: ttkbootstrap not installed on this Python"
+          python -c "import chapsim2_toolkit.gui"
 
       - name: Build a wheel and install it in a clean environment
         run: |

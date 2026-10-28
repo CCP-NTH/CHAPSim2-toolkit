@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.colors as mcolors
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 import math
 import os
 import re
@@ -99,6 +100,9 @@ class Config:
     #: Where figures are written. Blank keeps the historical behaviour
     #: (folder_path when save_to_path is set, plus turb_stats_plots/).
     output_dir: str = ''
+    grid_on: bool = True
+    line_markers_on: bool = False
+    line_width: float = 1.5
     xdmf_data_type: str = 'tsp_avg'          # 'tsp_avg', 't_avg' or 'inst' (spectrum/correlation only)
 
     body_force_on: bool = False
@@ -263,7 +267,10 @@ class Config:
             display_fig=getattr(config_module, 'display_fig', False),
             save_fig=getattr(config_module, 'save_fig', True),
             save_to_path=getattr(config_module, 'save_to_path', False),
-            large_text_on=getattr(config_module, 'large_text_on', False),
+            large_text_on=getattr(config_module, 'large_text_on', True),
+            grid_on=getattr(config_module, 'grid_on', True),
+            line_markers_on=getattr(config_module, 'line_markers_on', False),
+            line_width=float(getattr(config_module, 'line_width', 1.5)),
             plot_name=getattr(config_module, 'plot_name', ''),
             ux_velocity_log_ref_on=getattr(config_module, 'ux_velocity_log_ref_on', False),
             mhd_NK_ref_on=getattr(config_module, 'mhd_NK_ref_on', False),
@@ -346,6 +353,8 @@ class PlotConfig:
                 'joule': '#8c564b',
                 'electric_potential': '#c49c94',
                 'pressure_strain': '#bcbd22',
+                'pressure': '#17becf',
+                'lorentz': '#e7ba52',
                 'turbulent_diffusion': '#7f7f7f',
                 'pressure_force': '#9467bd',
                 'buoyancy_force': '#e377c2',
@@ -416,27 +425,8 @@ CASE_DERIVED_FIELDS = {
 }
 
 
-def _settle_case_switches(config: Config) -> Config:
-    """Turn a switch still left as None into a definite "off".
-
-    thermo_on and mhd_on default to None so the case can set them. A case
-    with no input file leaves them None, which the rest of the code would
-    read as off anyway; making that explicit keeps a None from travelling
-    into a comparison that would quietly do the wrong thing.
-    """
-    for field in ('thermo_on', 'mhd_on'):
-        if getattr(config, field, None) is None:
-            setattr(config, field, False)
-    return config
-
-
 def apply_case_inputs(config: Config, quiet: bool = False) -> Config:
     """Fill in whatever the cases' own input_chapsim.ini already states.
-
-    The solver input file is the authoritative record of how a case was run.
-    Transcribing the same half-dozen numbers into config.py is both a chore
-    and a silent hazard - a wrong Reynolds number rescales every
-    u_tau-normalised profile with nothing to show for it.
 
     A field left as None (or an empty list) is taken from the case. A field
     the user set is kept, but a disagreement with the case is reported,
@@ -456,7 +446,7 @@ def apply_case_inputs(config: Config, quiet: bool = False) -> Config:
         if params is not None:
             per_case[case] = params
     if not per_case:
-        return _settle_case_switches(config)
+        return config
 
     def say(message):
         if not quiet:
@@ -493,21 +483,14 @@ def apply_case_inputs(config: Config, quiet: bool = False) -> Config:
                     f'with {actual!r}. Using {current!r}; set it to None to take '
                     f'the value from the case.')
 
-    _settle_case_switches(config)
-
-    # The input file is only the right source for these if it still
-    # describes the run sitting beside it. Checked against the mesh in the
-    # output, which the input file fully determines.
+    # Checks input file against data
     from chapsim2_toolkit import case_consistency as cons
     for case in config.cases:
         for line in cons.describe_inconsistencies(
                 ut.case_path(config.folder_path, case), case):
             say(line)
 
-    # Supercritical water and CO2 come from NIST tables and the liquid
-    # metals from correlations, which between them is every fluid the
-    # solver models bar plain water. Anything left unmapped has to say so
-    # rather than fall back to a wrong fluid.
+    # Error for missing thermo data
     for case, params in per_case.items():
         if params.get('thermo_on') and not params.get('working_fluid'):
             say(f'Note: {case} was run with {params.get("ifluid_name")}, which the '
@@ -601,9 +584,6 @@ def _build_required_xdmf_vars(config: Config) -> Optional[set]:
         required.add('u3')
 
     if config.temp_on or config.heat_transf_coeff_on or config.Nusselt_number_on:
-        # 'Temperature' and 'temp' were listed here too, and the solver
-        # writes none of them, so every thermal run reported two variables
-        # missing. A warning that is always wrong is a warning nobody reads.
         required.update({'T', 'fuh1', 'fu1'})
 
     if config.u_prime_sq_on:
@@ -1828,23 +1808,31 @@ class BudgetComputer:
         'pressure_transport': 'Pressure Transport',
         'turbulent_diffusion': 'Turbulent Diffusion',
         'pressure_strain': 'Pressure Strain',
+        'pressure': 'Velocity-Pressure Gradient',
         'buoyancy': 'Buoyancy',
         'joule': 'Joule Dissipation',
         'electric_potential': 'Electric Potential',
+        'lorentz': 'Lorentz Term',
         'balance': 'Balance',
+    }
+
+    # Combined terms and their parts. Off by default.
+    COMBINED = {
+        'pressure': ('pressure_transport', 'pressure_strain'),
+        'lorentz': ('joule', 'electric_potential'),
     }
 
     @staticmethod
     def terms_for(component: str, thermo_on: bool, mhd_on: bool) -> List[str]:
         """The terms of `component`'s budget, in plotting order. With MHD on,
         the Lorentz term is split into its Joule dissipation (u' x B part)
-        and electric potential parts."""
+        and electric potential parts; 'pressure' and 'lorentz' are the sums."""
         terms = ['production', 'dissipation', 'mean_convection', 'viscous_diffusion',
-                 'pressure_transport', 'turbulent_diffusion', 'pressure_strain']
+                 'pressure_transport', 'turbulent_diffusion', 'pressure_strain', 'pressure']
         if thermo_on:
             terms.append('buoyancy')
         if mhd_on:
-            terms += ['joule', 'electric_potential']
+            terms += ['joule', 'electric_potential', 'lorentz']
         return terms + ['balance']
 
     def __init__(self, config: Config):
@@ -1853,9 +1841,9 @@ class BudgetComputer:
         self.average_z = config.average_z_direction
         self.average_x = config.average_x_direction
 
-        # The selected terms, or every term when none are listed.
+        # The selected terms, or every term but the combined ones when none are listed.
         available = self.terms_for(self.uiuj, config.thermo_on, config.mhd_on)
-        selected = config.re_stress_budget_terms or available
+        selected = config.re_stress_budget_terms or [t for t in available if t not in self.COMBINED]
         if isinstance(selected, str):                  # 'dissipation, joule' as well as a list
             selected = selected.replace(',', ' ').split()
         for term in selected:
@@ -1902,10 +1890,12 @@ class BudgetComputer:
             'viscous_diffusion':   lambda d: op.compute_viscous_diffusion(Re, d, self.uiuj),
             'pressure_transport':  lambda d: op.compute_pressure_transport(d, self.uiuj, u_ref),
             'pressure_strain':     lambda d: op.compute_pressure_strain(d, self.uiuj, u_ref),
+            'pressure':            lambda d: op.compute_velocity_pressure_gradient(d, self.uiuj),
             'turbulent_diffusion': lambda d: op.compute_turbulent_convection(d, self.uiuj),
             'buoyancy':            lambda d: op.compute_buoyancy_term(self.config.gravity_direction, u_ref, l_ref, d, self.uiuj),
             'joule':               lambda d: op.compute_joule_dissipation(self.config.mag_field_direction, self.config.stuart_number, d, self.uiuj),
             'electric_potential':  lambda d: op.compute_electric_potential_term(self.config.mag_field_direction, self.config.stuart_number, d, self.uiuj),
+            'lorentz':             lambda d: op.compute_mhd_term(self.config.mag_field_direction, self.config.stuart_number, d, self.uiuj),
         }
 
         # A term whose inputs the run did not write comes out identically
@@ -1927,9 +1917,11 @@ class BudgetComputer:
                     value = np.full(array.shape, np.nan)
             self.raw_results[term_name][(case, timestep)] = value
 
+        # Parts of a selected combined term are left out so nothing is counted twice.
+        in_combined = {part for name in self.terms for part in self.COMBINED.get(name, ())}
         balance_val = None
         for term_name in self.terms:
-            if term_name == 'balance':
+            if term_name == 'balance' or term_name in in_combined:
                 continue
             val = self.raw_results[term_name].get((case, timestep))
             if val is None:
@@ -3074,16 +3066,14 @@ class TurbulenceStatsPipeline:
         grouped: Dict[str, List] = {
             'ReStresses': [],
             'Profiles': [],
-            'ReStressBudget': [],
-            'TkeBudget': [],
+            'Budget': [],
             'BodyForce': [],
             'Anisotropy': [],
             'PeakGrowth': [],
         }
         for stat in self.statistics:
             if isinstance(stat, BudgetTerm):
-                grouped['ReStressBudget'].append(stat)
-                grouped['TkeBudget'].append(stat)
+                grouped['Budget'].append(stat)
             elif isinstance(stat, ForceTerm):
                 grouped['BodyForce'].append(stat)
             elif isinstance(stat, AnisotropyTerm):
@@ -3124,9 +3114,9 @@ class TurbulencePlotter:
         self.plot_config = plot_config
         self.data_loader = data_loader
         # Keep one consistent line style per case across all plots.
-        style_cycle = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 1))]
+        self.style_cycle = ['-', '--', '-.', ':', (0, (3, 1, 1, 1)), (0, (5, 1))]
         self.case_linestyles = {
-            case: style_cycle[i % len(style_cycle)]
+            case: self.style_cycle[i % len(self.style_cycle)]
             for i, case in enumerate(self.config.cases)
         }
         # Distinct case markers for readability in overlapping lines.
@@ -3296,8 +3286,57 @@ class TurbulencePlotter:
         """Return legend font size for normal/large text modes."""
         return 'large' if self.config.large_text_on else 'small'
 
+    def _add_legend(self, ax) -> None:
+        """Legend for ax. Lines labelled 'term, context' whose colour follows the
+        term and line style the context (budget terms at several x locations, say)
+        get a split legend: a column of colours for the terms and a column of line
+        styles for the contexts. Over 8 entries, it goes outside the axes, as one
+        column with the contexts below the terms."""
+        handles, labels = ax.get_legend_handles_labels()
+        if not handles:
+            return
+        term_colours, context_lines = {}, {}
+        for handle, label in zip(handles, labels):
+            term, sep, context = label.partition(', ')
+            if not isinstance(handle, Line2D) or not sep:
+                term_colours = {}
+                break
+            term_colours.setdefault(term, set()).add(mcolors.to_hex(handle.get_color()))
+            context_lines.setdefault(context, []).append(handle)
+        split = (len(term_colours) > 1 and len(context_lines) > 1
+                 and all(len(colours) == 1 for colours in term_colours.values())
+                 and all(len({h.get_linestyle() for h in lines}) == 1 for lines in context_lines.values()))
+        n_entries = len(term_colours) + len(context_lines) if split else len(handles)
+        outside = n_entries > 10
+        if split:
+            blank = Line2D([], [], linestyle='none')
+            term_handles = [Line2D([], [], color=colours.pop(), linewidth=self.config.line_width)
+                            for colours in term_colours.values()]
+            context_handles = []
+            for lines in context_lines.values():
+                proxy = Line2D([], [])
+                proxy.update_from(lines[0])               # keeps the dash pattern and marker
+                proxy.set_color('black')
+                proxy.set_markerfacecolor('black')
+                proxy.set_markeredgecolor('black')
+                context_handles.append(proxy)
+            if outside:      # one column, a gap between the terms and the contexts
+                handles = term_handles + [blank] + context_handles
+                labels = list(term_colours) + [''] + list(context_lines)
+            else:            # two columns side by side, padded to the same height
+                rows = max(len(term_handles), len(context_handles))
+                handles = (term_handles + [blank] * (rows - len(term_handles))
+                           + context_handles + [blank] * (rows - len(context_handles)))
+                labels = (list(term_colours) + [''] * (rows - len(term_colours))
+                          + list(context_lines) + [''] * (rows - len(context_lines)))
+        placement = dict(loc='upper left', bbox_to_anchor=(1.02, 1.0), borderaxespad=0.0) if outside else {}
+        ax.legend(handles, labels, ncol=2 if split and not outside else 1, edgecolor='black', framealpha=1.0,
+                  fontsize=self._get_legend_fontsize(), **placement)
+
     def _apply_axis_text_style(self, ax) -> None:
-        """Apply larger tick label text when requested."""
+        """Inward ticks on all four sides with minor ticks, and larger tick label text when requested."""
+        ax.minorticks_on()
+        ax.tick_params(axis='both', which='both', direction='in', top=True, right=True)
         if self.config.large_text_on:
             ax.tick_params(axis='both', which='both', labelsize=16)
 
@@ -3311,7 +3350,8 @@ class TurbulencePlotter:
         return [float(s.strip()) for s in self.config.slice_coords.split(',') if s.strip()]
 
     def _get_slice_indices(self) -> List[Tuple[int, float]]:
-        """Return list of (x-index, actual_x_value) for requested slices."""
+        """Return list of (x-index, requested x) for requested slices. The profile
+        is the nearest cell's, but the legend shows the x that was asked for."""
         x_coords = getattr(self.data_loader, 'x_coords', None)
         requested = self._parse_slice_coords()
         if not requested or x_coords is None:
@@ -3320,7 +3360,7 @@ class TurbulencePlotter:
         indices = []
         for xc in requested:
             idx = int(np.argmin(np.abs(x_coords - xc)))
-            indices.append((idx, float(x_coords[idx])))
+            indices.append((idx, xc))
         return indices
 
     def _extract_profiles(self, values: np.ndarray) -> List[Tuple[str, np.ndarray]]:
@@ -3413,7 +3453,7 @@ class TurbulencePlotter:
         class_titles = {
             'ReStresses': 'Reynolds Stresses',
             'Profiles': 'Profiles',
-            'ReStressBudget': 'TKE Budget',
+            'Budget': 'Budget',
             'BodyForce': 'Body Force Analysis',
             'Anisotropy': 'Anisotropy (Lumley Triangle)',
             'PeakGrowth': 'Peak Turbulent Kinetic Energy Growth',
@@ -3516,10 +3556,8 @@ class TurbulencePlotter:
                 self._get_stat_ylabel(stat.name, stat.label),
                 fontsize=self._get_axis_label_fontsize()
             )
-            ax.grid(True)
-            handles, labels = ax.get_legend_handles_labels()
-            if handles:
-                ax.legend(fontsize=self._get_legend_fontsize())
+            ax.grid(self.config.grid_on)
+            self._add_legend(ax)
             if row == nrows - 1:
                 ax.set_xlabel(self._get_y_profile_xlabel(), fontsize=self._get_axis_label_fontsize())
             self._apply_axis_text_style(ax)
@@ -3546,24 +3584,26 @@ class TurbulencePlotter:
                 for suffix, profile in profiles:
                     label = self._build_legend_label(stat.label, case, timestep, suffix, include_stat_label=True)
                     if stat.name == 'balance':
-                        self._plot_line(ax, y_plus, profile, label, color='black', linestyle='--')
+                        single = not suffix and len(self.config.cases) == 1
+                        linestyle = '--' if single else self._get_linestyle(case, suffix, stat.name)
+                        self._plot_line(ax, y_plus, profile, label, color='black', linestyle=linestyle)
                     else:
                         color = self._get_line_color(case, timestep, stat.name, suffix)
-                        linestyle = self._get_linestyle(case)
+                        linestyle = self._get_linestyle(case, suffix, stat.name)
                         marker = self._get_marker(case)
                         self._plot_line(ax, y_plus, profile, label, color, linestyle=linestyle, marker=marker)
 
         ax.axhline(y=0, color='gray', linewidth=0.5, linestyle='-')
-        ax.set_title(f'TKE Budget ({component})', fontsize=self._get_title_fontsize())
+        ax.set_title(f'Budget ({component})', fontsize=self._get_title_fontsize())
         ax.set_xlabel(self._get_y_profile_xlabel(), fontsize=self._get_axis_label_fontsize())
-        if self.config.norm_by_u_tau_sq:
-            ax.set_ylabel('Budget term magnitude / $u_\\tau^2$', fontsize=self._get_axis_label_fontsize())
-        else:
-            ax.set_ylabel('Budget term magnitude', fontsize=self._get_axis_label_fontsize())
-        ax.grid(True)
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(fontsize=self._get_legend_fontsize())
+        # 'Gain' and 'Loss' where the y label goes, each centred on its side of zero.
+        ax.set_ylabel(' ', fontsize=self._get_axis_label_fontsize())
+        y_low, y_high = ax.get_ylim()
+        for text, y in (('Gain', y_high / 2), ('Loss', y_low / 2)):
+            ax.annotate(text, xy=(0.5, y), xycoords=(ax.yaxis.label, 'data'), rotation=90,
+                        ha='center', va='center', fontsize=self._get_axis_label_fontsize())
+        ax.grid(self.config.grid_on)
+        self._add_legend(ax)
         self._apply_axis_text_style(ax)
         return fig
 
@@ -3583,7 +3623,7 @@ class TurbulencePlotter:
                 for suffix, profile in profiles:
                     label = self._build_legend_label(stat.label, case, timestep, suffix, include_stat_label=True)
                     color = self._get_line_color(case, timestep, stat.name, suffix)
-                    linestyle = self._get_linestyle(case)
+                    linestyle = self._get_linestyle(case, suffix, stat.name)
                     marker = self._get_marker(case)
                     self._plot_line(ax, y_plus, profile, label, color, linestyle=linestyle, marker=marker)
 
@@ -3594,10 +3634,8 @@ class TurbulencePlotter:
             ax.set_ylabel('Force magnitude / $u_\\tau^2$', fontsize=self._get_axis_label_fontsize())
         else:
             ax.set_ylabel('Force magnitude', fontsize=self._get_axis_label_fontsize())
-        ax.grid(True)
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(fontsize=self._get_legend_fontsize())
+        ax.grid(self.config.grid_on)
+        self._add_legend(ax)
         self._apply_axis_text_style(ax)
         return fig
 
@@ -3607,9 +3645,7 @@ class TurbulencePlotter:
         Built directly from the eigenvalue constraints of a traceless
         symmetric 3x3 tensor (sum(lambda_i) = 0, -1/3 <= lambda_i <= 2/3)
         using the same II = -0.5*sum(lambda_i**2), III = prod(lambda_i)
-        definitions as op.second_invariant/op.third_invariant, so the
-        boundary curves are guaranteed self-consistent with the plotted
-        data rather than risking an algebra slip in an inverted closed form.
+        definitions as op.second_invariant/op.third_invariant
         """
         def invariants(l1, l2, l3):
             ii = -0.5 * (l1 ** 2 + l2 ** 2 + l3 ** 2)
@@ -3722,10 +3758,8 @@ class TurbulencePlotter:
             ax.set_title(f'{kind_titles.get(kind, kind)} Anisotropy', fontsize=self._get_title_fontsize())
             ax.set_xlabel('$III$', fontsize=self._get_axis_label_fontsize())
             ax.set_ylabel('$-II$', fontsize=self._get_axis_label_fontsize())
-            ax.grid(True)
-            handles, labels = ax.get_legend_handles_labels()
-            if handles:
-                ax.legend(fontsize=self._get_legend_fontsize())
+            ax.grid(self.config.grid_on)
+            self._add_legend(ax)
             self._apply_axis_text_style(ax)
 
         return fig
@@ -3757,7 +3791,7 @@ class TurbulencePlotter:
                         color = self._get_color(f'{case}|{timestep}|{component}|{y_index}|{x_index}',
                                                 'spectrum')
                         ax.loglog(data['k'], E[y_index, x_index], label=label, color=color,
-                                  linestyle=self._get_linestyle(case))
+                                  linestyle=self._get_linestyle(case), linewidth=self.config.line_width)
 
         # Reference slopes: Kolmogorov k^-5/3 and k^-3 (quasi-2D turbulence,
         # e.g. under a strong magnetic field). Only the slope means anything, so
@@ -3785,10 +3819,8 @@ class TurbulencePlotter:
         ax.set_xlabel(f'$k_{direction}$', fontsize=self._get_axis_label_fontsize())
         ax.set_ylabel(', '.join(f'$E_{{{c}{c}}}(k_{direction})$' for c in spectrum_computer.components),
                       fontsize=self._get_axis_label_fontsize())
-        ax.grid(True, which='both')
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(fontsize=self._get_legend_fontsize())
+        ax.grid(self.config.grid_on, which='both')
+        self._add_legend(ax)
         self._apply_axis_text_style(ax)
 
         return fig
@@ -3830,16 +3862,15 @@ class TurbulencePlotter:
                         color = self._get_color(f'{case}|{timestep}|{comp}|{y_index}|{x_index}',
                                                 'two_point_corr')
                         ax.plot(data['sep'], data['rho'][:, y_index, x_index],
-                                label=label, color=color, linestyle=self._get_linestyle(case))
+                                label=label, color=color, linestyle=self._get_linestyle(case),
+                                linewidth=self.config.line_width)
 
         ax.axhline(0.0, color='black', linewidth=0.8, alpha=0.5)
         ax.set_title('Spanwise Two-Point Velocity Correlation', fontsize=self._get_title_fontsize())
         ax.set_xlabel('$\\Delta z$', fontsize=self._get_axis_label_fontsize())
         ax.set_ylabel('$\\rho$', fontsize=self._get_axis_label_fontsize())
-        ax.grid(True)
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(fontsize=self._get_legend_fontsize())
+        ax.grid(self.config.grid_on)
+        self._add_legend(ax)
         self._apply_axis_text_style(ax)
 
         return fig
@@ -3909,15 +3940,13 @@ class TurbulencePlotter:
                     label = self._build_legend_label('integral scale', case, timestep, suffix)
                     color = self._get_color(f'{case}|{timestep}|{comp}|L|{x_index}', 'two_point_corr')
                     ax.plot(data['y'], data['L'][:, x_index], label=label, color=color,
-                            linestyle=self._get_linestyle(case))
+                            linestyle=self._get_linestyle(case), linewidth=self.config.line_width)
 
         ax.set_title('Spanwise Integral Length Scale', fontsize=self._get_title_fontsize())
         ax.set_xlabel(self._corr_y_axis_label(), fontsize=self._get_axis_label_fontsize())
         ax.set_ylabel('$L_z$', fontsize=self._get_axis_label_fontsize())
-        ax.grid(True)
-        handles, labels = ax.get_legend_handles_labels()
-        if handles:
-            ax.legend(fontsize=self._get_legend_fontsize())
+        ax.grid(self.config.grid_on)
+        self._add_legend(ax)
         self._apply_axis_text_style(ax)
 
         return fig
@@ -4015,7 +4044,7 @@ class TurbulencePlotter:
                 for suffix, profile in profiles:
                     color = self._get_line_color(case, timestep, stat.name, suffix)
                     label = self._build_legend_label(stat.label, case, timestep, suffix)
-                    linestyle = self._get_linestyle(case)
+                    linestyle = self._get_linestyle(case, suffix, stat.name)
                     marker = self._get_marker(case)
                     markevery = self._get_markevery(len(x_coords))
                     ax.plot(
@@ -4024,6 +4053,7 @@ class TurbulencePlotter:
                         label=label,
                         color=color,
                         linestyle=linestyle,
+                        linewidth=self.config.line_width,
                         marker=marker,
                         markersize=4,
                         markevery=markevery
@@ -4034,10 +4064,8 @@ class TurbulencePlotter:
                 self._get_stat_ylabel(stat.name, stat.label),
                 fontsize=self._get_axis_label_fontsize()
             )
-            ax.grid(True)
-            handles, labels = ax.get_legend_handles_labels()
-            if handles:
-                ax.legend(fontsize=self._get_legend_fontsize())
+            ax.grid(self.config.grid_on)
+            self._add_legend(ax)
             self._apply_axis_text_style(ax)
 
         for i in range(n_stats, nrows * ncols):
@@ -4047,7 +4075,7 @@ class TurbulencePlotter:
 
     def _plot_x_profile_single_figure(self, statistics, title: str, x_coords):
         """Plot every statistic's x-profile together on one shared set of axes."""
-        fig = Figure(figsize=(10, 6))
+        fig = Figure(figsize=(10, 6), constrained_layout=True)
         ax = fig.add_subplot(111)
 
         for stat in statistics:
@@ -4056,7 +4084,7 @@ class TurbulencePlotter:
                 for suffix, profile in profiles:
                     color = self._get_line_color(case, timestep, stat.name, suffix)
                     label = self._build_legend_label(stat.label, case, timestep, suffix, include_stat_label=True)
-                    linestyle = self._get_linestyle(case)
+                    linestyle = self._get_linestyle(case, suffix, stat.name)
                     marker = self._get_marker(case)
                     markevery = self._get_markevery(len(x_coords))
                     ax.plot(
@@ -4065,6 +4093,7 @@ class TurbulencePlotter:
                         label=label,
                         color=color,
                         linestyle=linestyle,
+                        linewidth=self.config.line_width,
                         marker=marker,
                         markersize=4,
                         markevery=markevery
@@ -4079,8 +4108,8 @@ class TurbulencePlotter:
             ax.set_ylabel('$E_k$ / $u_\\tau^2$', fontsize=self._get_axis_label_fontsize())
         else:
             ax.set_ylabel('$E_k$', fontsize=self._get_axis_label_fontsize())
-        ax.grid(True)
-        ax.legend(fontsize=self._get_legend_fontsize())
+        ax.grid(self.config.grid_on)
+        self._add_legend(ax)
         self._apply_axis_text_style(ax)
         return fig
 
@@ -4110,6 +4139,7 @@ class TurbulencePlotter:
         plot_kwargs = {
             'label': label,
             'linestyle': linestyle,
+            'linewidth': self.config.line_width,
             'marker': marker,
             'color': color
         }
@@ -4132,12 +4162,22 @@ class TurbulencePlotter:
         # visually even for both linear and semilog plots.
         return (0.0, 1.0 / 11.0)
 
-    def _get_linestyle(self, case: str):
-        """Return a consistent line style for each case."""
+    def _get_linestyle(self, case: str, suffix: str = '', stat_name: Optional[str] = None):
+        """Return a consistent line style for each case. A term with a fixed
+        colour (budget and body-force terms) at several slice locations takes
+        a style per location instead, the same for every term."""
+        if suffix and (stat_name in self.plot_config.budget_colors or stat_name == 'balance'):
+            x_labels = [f' x={xv:.3g}' for _idx, xv in sorted(self._get_slice_indices(), key=lambda pair: pair[1])]
+            y_labels = [f' y={yv:.3g}' for _idx, yv in sorted(self._get_x_profile_y_indices(), key=lambda pair: pair[1])]
+            for labels in (x_labels, y_labels):
+                if suffix in labels:
+                    return self.style_cycle[labels.index(suffix) % len(self.style_cycle)]
         return self.case_linestyles.get(case, '-')
 
     def _get_marker(self, case: str):
-        """Return a consistent marker for each case."""
+        """Return a consistent marker for each case, or none when line markers are off."""
+        if not self.config.line_markers_on:
+            return ''
         return self.case_markers.get(case, 'o')
 
     def _plot_reference_data(self, ax, stat_name: str, case: str,
@@ -4262,11 +4302,8 @@ class TurbulencePlotter:
             ext = self.config.plot_name.rsplit('.', 1)[1] if '.' in self.config.plot_name else 'png'
             filename = f'{base_name}{suffix}.{ext}' if suffix else self.config.plot_name
         else:
-            filename = f'turb_stats_plot{suffix}.png' if suffix else 'turb_stats_plot.png'
+            filename = f'{suffix}.png' if suffix else 'turb_stats_plot.png'
 
-        # What drew the figure, written into the figure. A plot that ends
-        # up in a paper has to be traceable to the code and the case that
-        # made it, and a PNG keeps no record of either by itself.
         metadata = prov.figure_metadata(
             filename.rsplit('.', 1)[-1], config=self.config,
             config_path=getattr(self.config, 'config_path', None))
@@ -4318,10 +4355,7 @@ class TurbulencePlotter:
 # MAIN EXECUTION
 # =====================================================================================================================================================
 
-#: The template config.py shipped inside the package: the fallback when a
-#: run supplies none, and the file to copy when starting a new one. It
-#: lives in the package rather than the repository root so that it is
-#: still there after an install, and so that there is only one of it.
+#: The template config.py shipped inside the package
 BUNDLED_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               'config.py')
 
@@ -4332,14 +4366,6 @@ def find_config(path: str = None) -> str:
     1. an explicit path, from --config;
     2. config.py in the working directory;
     3. the one shipped with the toolkit.
-
-    The second is the point of this. `import config` picked whichever
-    config.py was first on sys.path, which for `python /toolkit/turb_stats.py`
-    is the toolkit's own - so a config.py written next to a case was
-    silently ignored and the shipped defaults used instead. With more than
-    one person sharing a checkout that is worse than an inconvenience:
-    someone's figures come out carrying someone else's settings, and
-    nothing on the figure says so.
     """
     if path:
         resolved = os.path.abspath(os.path.expanduser(path))

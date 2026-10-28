@@ -249,7 +249,8 @@ def test_budget_plots_only_the_selected_terms():
 
     for component in ('total', 'uu11'):
         everything, _ = budget(None, component=component)
-        assert everything.terms == BudgetComputer.terms_for(component, False, True), 'no selection means every term'
+        assert everything.terms == [t for t in BudgetComputer.terms_for(component, False, True)
+                                    if t not in BudgetComputer.COMBINED], 'no selection means every term but the combined ones'
         assert {'joule', 'electric_potential'} <= set(everything.terms), f'{component}: the Lorentz term is split'
     assert budget('dissipation, balance')[0].terms == ['dissipation', 'balance'], 'a string list works too'
 
@@ -263,6 +264,17 @@ def test_budget_plots_only_the_selected_terms():
         'without <u_i j_l> the electric potential term is marked unavailable, not shown as -J'
     assert not np.any(np.isnan(unavailable.raw_results['joule'][('c', '1')])), \
         'while the Joule dissipation needs only the Reynolds stresses'
+
+
+def test_combined_pressure_and_lorentz_terms():
+    for component in ('total', 'uu12'):
+        parts = ['pressure_transport', 'pressure_strain', 'joule', 'electric_potential']
+        computer, _ = budget(parts + ['pressure', 'lorentz', 'dissipation', 'balance'], component=component)
+        raw = {name: values[('c', '1')] for name, values in computer.raw_results.items()}
+        assert np.allclose(raw['pressure'], raw['pressure_transport'] + raw['pressure_strain']), component
+        assert np.allclose(raw['lorentz'], raw['joule'] + raw['electric_potential']), component
+        assert np.allclose(raw['balance'], raw['dissipation'] + raw['pressure'] + raw['lorentz']), \
+            f'{component}: a selected combined term replaces its parts in the balance'
 
 
 def test_streamwise_derivatives_use_the_x_grid():
@@ -284,3 +296,24 @@ def test_streamwise_derivatives_use_the_x_grid():
         assert 'x_coords' in str(exc)
     else:
         raise AssertionError('without the x grid it must not fall back to index spacing')
+
+
+def test_budget_line_style_follows_the_x_location():
+    from chapsim2_toolkit.turb_stats import TurbulencePlotter, PlotConfig, BudgetTerm
+    config = Config.from_module(types.SimpleNamespace(
+        cases=['c'], timesteps=['1'], Re=[180.0], re_stress_budget_on=True, re_stress_component='uu11',
+        re_stress_budget_terms=['production', 'dissipation', 'balance'], slice_coords='3.0,1.0',
+        average_x_direction=False, average_z_direction=True))
+    computer = BudgetComputer(config)
+    y, x = np.linspace(-1.0, 1.0, NY), np.linspace(0.0, 4.0, 9)
+    for term in computer.terms:
+        computer.processed_results[term][('c', '1')] = np.outer(np.sin(3 * y), 1 + x)
+    plotter = TurbulencePlotter(config, PlotConfig(), types.SimpleNamespace(x_coords=x, y_coords=y))
+    plotter._get_y_plus = lambda case, timestep: y
+    fig = plotter._plot_budget_figure([BudgetTerm(t, BudgetComputer.LABELS[t], computer) for t in computer.terms], '')
+    styles = {line.get_label(): line.get_linestyle() for line in fig.axes[0].get_lines()}
+    for term in ('Production', 'Dissipation', 'Balance'):
+        assert (styles[f'{term}, x=1'], styles[f'{term}, x=3']) == ('-', '--'), term
+    legend = fig.axes[0].get_legend()
+    assert [t.get_text() for t in legend.get_texts()] == ['Production', 'Dissipation', 'Balance', 'x=3', 'x=1', ''], \
+        'a split legend: a column of terms by colour, a column of locations by line style'

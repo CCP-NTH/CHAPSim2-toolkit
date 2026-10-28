@@ -667,7 +667,8 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         # and the thermal/MHD switches, so only those are shown.
         from chapsim2_toolkit.turb_stats import BudgetComputer
         budget_terms_frame = ttk.Frame(s)
-        self._budget_terms = {name: tk.BooleanVar(value=True) for name in BudgetComputer.LABELS}
+        self._budget_terms = {name: tk.BooleanVar(value=name not in BudgetComputer.COMBINED)
+                              for name in BudgetComputer.LABELS}
         budget_boxes = {name: ttk.Checkbutton(budget_terms_frame, text=label, variable=self._budget_terms[name])
                         for name, label in BudgetComputer.LABELS.items()}
 
@@ -736,7 +737,10 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
         half_side_row = crow(s, 'Half channel side', sv('half_channel_side', 'lower'),
                              ['lower', 'upper', 'average'])
         crow(s, 'Axis scale', sv('axis_scale', 'linear'), ['linear', 'log'])
-        chk(s, 'Large text', bv('large_text_on', False))
+        chk(s, 'Large text', bv('large_text_on', True))
+        chk(s, 'Grid', bv('grid_on', True))
+        chk(s, 'Line markers', bv('line_markers_on', False))
+        erow(s, 'Line width', sv('line_width', '1.5'))
 
         # ---- Output ----
         s = sec('Output')
@@ -1124,6 +1128,9 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             output_dir=v['output_dir'].get().strip(),
             geometry=v['geometry'].get(),
             large_text_on=v['large_text_on'].get(),
+            grid_on=v['grid_on'].get(),
+            line_markers_on=v['line_markers_on'].get(),
+            line_width=(self._parse_floats(v['line_width'].get()) or [1.5])[0],
             plot_name='',
             ux_velocity_log_ref_on=v['ux_velocity_log_ref_on'].get(),
             mhd_NK_ref_on=v['mhd_NK_ref_on'].get(),
@@ -1237,7 +1244,7 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
                 'two_point_corr_components': 'uu', 'two_point_corr_max_sep': 0,
                 'two_point_corr_mean_mode': 't_avg',
                 'output_dir': '', 'geometry': 'channel',
-                'spectrum_components': 'u',
+                'spectrum_components': 'u', 'line_width': 1.5,
             }
             bool_fields = {
                 'thermo_on': False, 'mhd_on': False,
@@ -1256,7 +1263,8 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
                 'Nusselt_number_on': False, 'turb_prandtl_on': False,
                 'norm_by_u_tau_sq': True, 'norm_ux_by_u_tau': True,
                 'norm_y_to_y_plus': False, 'norm_temp_by_ref_temp': False,
-                'large_text_on': False, 'ux_velocity_log_ref_on': True,
+                'large_text_on': True, 'grid_on': True, 'line_markers_on': False,
+                'ux_velocity_log_ref_on': True,
                 'mhd_NK_ref_on': False, 'mkm180_ch_ref_on': False,
                 'save_fig': True,
                 'two_point_corr_on': False, 'spectrum_on': False,
@@ -1268,7 +1276,9 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             for name, default in bool_fields.items():
                 if name in v:
                     v[name].set(getattr(mod, name, default))
-            budget_terms = getattr(mod, 're_stress_budget_terms', None) or list(self._budget_terms)
+            from chapsim2_toolkit.turb_stats import BudgetComputer
+            budget_terms = getattr(mod, 're_stress_budget_terms', None) or \
+                [t for t in BudgetComputer.LABELS if t not in BudgetComputer.COMBINED]
             for name, var in self._budget_terms.items():
                 var.set(name in budget_terms)
             v['axis_scale'].set('log' if getattr(mod, 'log_y_scale', False) else 'linear')
@@ -1420,6 +1430,9 @@ class TurbStatsTab(CaseConsumer, ConsoleConsumer, ttk.Frame):
             f"output_dir = '{v['output_dir'].get().strip()}'",
             f"geometry = '{v['geometry'].get()}'",
             f"large_text_on = {v['large_text_on'].get()}",
+            f"grid_on = {v['grid_on'].get()}",
+            f"line_markers_on = {v['line_markers_on'].get()}",
+            f"line_width = {(self._parse_floats(v['line_width'].get()) or [1.5])[0]}",
             '',
             f"ux_velocity_log_ref_on = {v['ux_velocity_log_ref_on'].get()}",
             f"mhd_NK_ref_on = {v['mhd_NK_ref_on'].get()}",
@@ -3756,6 +3769,9 @@ class App(ttk.Window):
 
     def __init__(self):
         super().__init__(theme='pydata-dark')
+        # The mouse wheel scrolls the page; over a dropdown it would also change its value.
+        for event in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
+            self.unbind_class('TCombobox', event)
         self.title('CHAPSim2 Toolkit')
         self.geometry('1400x820')
         self.minsize(920, 600)

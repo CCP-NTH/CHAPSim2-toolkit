@@ -977,6 +977,14 @@ def compute_pressure_strain(tke_comp_dict, uiuj='total', u_ref=1):
         result = S[i, j] + S[j, i]
         return  {'pressure_strain': result if f is None else result / (f)}
 
+def compute_velocity_pressure_gradient(tke_comp_dict, uiuj='total'):
+    """Velocity-pressure gradient term, -(<u'_i dp'/dx_j> + <u'_j dp'/dx_i>): pressure transport + pressure strain."""
+    
+    transport = next(iter(compute_pressure_transport(tke_comp_dict, uiuj).values()))
+    strain = next(iter(compute_pressure_strain(tke_comp_dict, uiuj).values()))
+    
+    return {'pressure': transport + strain}
+
 # def compute_pressure_work(tke_comp_dict, uiuj='total'):
 #     """
 #     Pressure work: (1/<f>) * (d<p>/dx_i * u'_i + d<p>/dx_j * u'_j)
@@ -1071,7 +1079,10 @@ def compute_joule_dissipation(mag_field_direction, stuart_number, tke_comp_dict,
 
 
 def compute_electric_potential_term(mag_field_direction, stuart_number, tke_comp_dict, uiuj='total'):
-    """The rest of the Lorentz term, M_ij - J_ij: the part carried by the electric potential fluctuation."""
+    """
+    The rest of the Lorentz term, M_ij - J_ij: the part carried by the 
+    electric potential fluctuation.
+    """
     lorentz = next(iter(compute_mhd_term(mag_field_direction, stuart_number, tke_comp_dict, uiuj).values()))
     if not np.any(lorentz):
         return {'electric_potential': lorentz}    # Lorentz inputs absent: leave it unavailable, not -J
