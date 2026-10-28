@@ -9,7 +9,7 @@ name = "chapsim2-toolkit"
 dynamic = ["version"]
 description = "Post-processing and pre-processing toolkit for the CHAPSim2 DNS solver"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
 maintainers = [{ name = "Wei Wang", email = "wei.wang@stfc.ac.uk" }]
 authors = [
@@ -37,8 +37,7 @@ dependencies = [
 [project.optional-dependencies]
 # gui.py calls ttk.Window(theme=...) and uses the pydata themes, neither of
 # which exists before ttkbootstrap 2.0; on an older one the main window
-# cannot be constructed at all. ttkbootstrap 2 needs Python 3.10, so the GUI
-# has a higher floor than the rest of the toolkit.
+# cannot be constructed at all. ttkbootstrap 2 needs Python 3.10.
 gui = ["ttkbootstrap>=2.0.0"]
 3d = ["pyvista>=0.32.0"]
 dev = ["pytest>=6.0", "pytest-cov>=2.0"]

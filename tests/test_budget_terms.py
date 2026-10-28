@@ -8,11 +8,16 @@ the dataset's own budget file.
 Code assumes homogeneity in x and z directions.
 """
 
+import contextlib
+import io
+import types
 from pathlib import Path
 
 import numpy as np
 
 from chapsim2_toolkit import operations as op
+from chapsim2_toolkit import utils as ut
+from chapsim2_toolkit.turb_stats import BudgetComputer, Config
 
 DATA = Path(__file__).parent / "reference_data" / "Chan180_FD2_all"
 
@@ -100,7 +105,7 @@ def test_ruu_budget_matches_chan180():
 
     # Laplacian of Reynolds stresses: d²<u'_i u'_j>/dy² (only y matters)
     lap_re_stress_x2 = np.zeros((3, 3, N))
-    lap_re_stress_x2[0, 0] = op.second_derivative(uu, y_c, axis=0)
+    lap_re_stress_x2[0, 0] = op.second_derivative(uu, y_c, axis=0, walls=(0.0, None))  # wall, then centreline
 
     # Pressure-velocity fluctuation gradient: d<p'u'_i>/dx_j (only y nonzero)
     press_vel_grad = np.zeros((3, 3, N))
@@ -168,8 +173,147 @@ def test_ruu_budget_matches_chan180():
         ("Pressure transport",  press_trans,  ref_pdiff,   1e-3),
         ("Pressure strain",     press_strain, ref_pstrain, 1e-3),
     ]
+    # The wall, where <u'u'> vanishes, is the third point of the stencil in the
+    # cell next to it, so viscous diffusion holds up there too, balancing the
+    # dissipation. It came out as exactly zero when that cell extrapolated linearly.
+    assert np.allclose(visc_diff[:2], ref_visc[:2], rtol=5e-3), (visc_diff[:2], ref_visc[:2])
     for name, computed, reference, tolerance in terms:
         err  = np.abs(computed[s] - reference[s]).max()
         rmax = np.abs(reference[s]).max()
         assert err <= tolerance * rmax + 1e-9, \
             f"{name}: max|err| = {err:.3e} against a peak of {rmax:.3e}"
+
+
+# ── term selection and the Joule split, on synthetic profiles ─────────────────
+NY = 24
+N_STUART = 0.4
+
+
+def mhd_profiles(seed=0):
+    """Every variable a budget can read, as random wall-normal profiles."""
+    rng = np.random.default_rng(seed)
+    return {name: rng.standard_normal(NY) for name in ut._BASE_REQUIRED_VARS}
+
+
+def budget(terms, component='total', raw=None):
+    """A BudgetComputer for an MHD case, run once on `raw`; returns it and what it printed."""
+    config = Config.from_module(types.SimpleNamespace(
+        cases=['c'], timesteps=['1'], Re=[180.0], mhd_on=True, stuart_number=N_STUART,
+        re_stress_budget_on=True, re_stress_component=component, re_stress_budget_terms=terms,
+        average_x_direction=True, average_z_direction=True))
+    loader = types.SimpleNamespace(get_raw_dict=lambda case, ts: raw or mhd_profiles(),
+                                   y_coords=np.linspace(-1.0, 1.0, NY))
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        computer = BudgetComputer(config)
+        computer.compute_for_case('c', '1', loader)
+    return computer, printed.getvalue()
+
+
+def test_joule_dissipation_is_the_u_cross_b_work():
+    """J_ij against N(<u'_i f_j> + <u'_j f_i>), f = (u' x B) x B, from velocity samples."""
+    rng = np.random.default_rng(1)
+    u = rng.standard_normal((5000, 3)) @ rng.standard_normal((3, 3))      # correlated fluctuations
+    B = np.array([0.3, 0.8, -0.5])                                          # any field, not a unit one
+    f = np.cross(np.cross(u, B), B)
+    work = N_STUART * (u.T @ f + f.T @ u) / len(u)
+    d = {'reynolds_stress_tensor': u.T @ u / len(u)}
+    for c, (i, j) in {'uu11': (0, 0), 'uu12': (0, 1), 'uu13': (0, 2), 'uu22': (1, 1), 'uu33': (2, 2)}.items():
+        assert np.isclose(op.compute_joule_dissipation(B, N_STUART, d, c)[f'joule_{c}'], work[i, j]), c
+    assert np.isclose(op.compute_joule_dissipation(B, N_STUART, d)['joule'], 0.5 * np.trace(work)), \
+        'the TKE takes half the trace, like the other terms'
+
+
+def test_joule_split_of_the_lorentz_term():
+    with contextlib.redirect_stdout(io.StringIO()):
+        d = op.compute_budget_components(mhd_profiles(), np.linspace(-1.0, 1.0, NY), average_z=True, average_x=True)
+    R, B = d['reynolds_stress_tensor'], [0.0, 1.0, 0.0]                    # a wall-normal field
+    joule = {}
+    for c in ('total', 'uu11', 'uu12', 'uu22', 'uu33'):
+        lorentz = next(iter(op.compute_mhd_term(B, N_STUART, d, c).values()))
+        joule[c] = next(iter(op.compute_joule_dissipation(B, N_STUART, d, c).values()))
+        potential = op.compute_electric_potential_term(B, N_STUART, d, c)['electric_potential']
+        assert np.allclose(joule[c] + potential, lorentz), f'{c}: Joule + electric potential = Lorentz term'
+    assert np.allclose(joule['uu11'], -2 * N_STUART * R[0, 0]) and np.allclose(joule['uu33'], -2 * N_STUART * R[2, 2])
+    assert np.allclose(joule['uu22'], 0.0), 'nothing is damped along the field'
+    assert np.allclose(joule['uu12'], -N_STUART * R[0, 1])
+    assert np.allclose(joule['total'], -N_STUART * (R[0, 0] + R[2, 2])), "TKE: -N <|u' x B|^2>"
+
+
+def test_budget_plots_only_the_selected_terms():
+    computer, _ = budget(['joule', 'dissipation', 'balance'])
+    assert computer.terms == ['dissipation', 'joule', 'balance'], 'the selection, in plotting order'
+    raw = computer.raw_results
+    assert np.allclose(raw['balance'][('c', '1')], raw['dissipation'][('c', '1')] + raw['joule'][('c', '1')]), \
+        'the balance sums the selected terms'
+
+    for component in ('total', 'uu11'):
+        everything, _ = budget(None, component=component)
+        assert everything.terms == [t for t in BudgetComputer.terms_for(component, False, True)
+                                    if t not in BudgetComputer.COMBINED], 'no selection means every term but the combined ones'
+        assert {'joule', 'electric_potential'} <= set(everything.terms), f'{component}: the Lorentz term is split'
+    assert budget('dissipation, balance')[0].terms == ['dissipation', 'balance'], 'a string list works too'
+
+    skipped, printed = budget(['joule', 'buoyancy'], component='uu11')
+    assert skipped.terms == ['joule'] and "'buoyancy' is not a term of this uu11 budget" in printed, \
+        'a term this budget does not have (buoyancy without thermal statistics) is named and skipped'
+
+    no_currents = {k: v for k, v in mhd_profiles().items() if not k.startswith('ju')}
+    unavailable, _ = budget(['joule', 'electric_potential'], raw=no_currents)
+    assert np.all(np.isnan(unavailable.raw_results['electric_potential'][('c', '1')])), \
+        'without <u_i j_l> the electric potential term is marked unavailable, not shown as -J'
+    assert not np.any(np.isnan(unavailable.raw_results['joule'][('c', '1')])), \
+        'while the Joule dissipation needs only the Reynolds stresses'
+
+
+def test_combined_pressure_and_lorentz_terms():
+    for component in ('total', 'uu12'):
+        parts = ['pressure_transport', 'pressure_strain', 'joule', 'electric_potential']
+        computer, _ = budget(parts + ['pressure', 'lorentz', 'dissipation', 'balance'], component=component)
+        raw = {name: values[('c', '1')] for name, values in computer.raw_results.items()}
+        assert np.allclose(raw['pressure'], raw['pressure_transport'] + raw['pressure_strain']), component
+        assert np.allclose(raw['lorentz'], raw['joule'] + raw['electric_potential']), component
+        assert np.allclose(raw['balance'], raw['dissipation'] + raw['pressure'] + raw['lorentz']), \
+            f'{component}: a selected combined term replaces its parts in the balance'
+
+
+def test_streamwise_derivatives_use_the_x_grid():
+    """A developing (inlet/outlet) flow is differentiated along x: per unit length, not per grid index."""
+    x = np.linspace(0.0, 10.0, 41) ** 1.2                                  # a stretched x grid
+    y = np.linspace(-1.0, 1.0, NY)
+    raw = {name: np.ones((NY, len(x))) for name in ut._BASE_REQUIRED_VARS}
+    raw['pr'] = -3.0 * np.tile(x, (NY, 1))                                # mean pressure falling along x
+    raw['pru1'] = raw['pr'] * raw['u1'] + 0.5 * np.tile(x, (NY, 1))       # <p'u'> = x/2
+    with contextlib.redirect_stdout(io.StringIO()):
+        budget = op.compute_budget_components(raw, y, x_coords=x)
+        force = op.compute_force_components(raw, y, x_coords=x)
+    assert np.allclose(budget['press_velocity_fluc_grad_tensor'][0, 0], 0.5), "d<p'u'>/dx"
+    assert np.allclose(force['pr_grad'][0], -3.0), 'd<p>/dx'
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            op.compute_budget_components(raw, y)
+    except ValueError as exc:
+        assert 'x_coords' in str(exc)
+    else:
+        raise AssertionError('without the x grid it must not fall back to index spacing')
+
+
+def test_budget_line_style_follows_the_x_location():
+    from chapsim2_toolkit.turb_stats import TurbulencePlotter, PlotConfig, BudgetTerm
+    config = Config.from_module(types.SimpleNamespace(
+        cases=['c'], timesteps=['1'], Re=[180.0], re_stress_budget_on=True, re_stress_component='uu11',
+        re_stress_budget_terms=['production', 'dissipation', 'balance'], slice_coords='3.0,1.0',
+        average_x_direction=False, average_z_direction=True))
+    computer = BudgetComputer(config)
+    y, x = np.linspace(-1.0, 1.0, NY), np.linspace(0.0, 4.0, 9)
+    for term in computer.terms:
+        computer.processed_results[term][('c', '1')] = np.outer(np.sin(3 * y), 1 + x)
+    plotter = TurbulencePlotter(config, PlotConfig(), types.SimpleNamespace(x_coords=x, y_coords=y))
+    plotter._get_y_plus = lambda case, timestep: y
+    fig = plotter._plot_budget_figure([BudgetTerm(t, BudgetComputer.LABELS[t], computer) for t in computer.terms], '')
+    styles = {line.get_label(): line.get_linestyle() for line in fig.axes[0].get_lines()}
+    for term in ('Production', 'Dissipation', 'Balance'):
+        assert (styles[f'{term}, x=1'], styles[f'{term}, x=3']) == ('-', '--'), term
+    legend = fig.axes[0].get_legend()
+    assert [t.get_text() for t in legend.get_texts()] == ['Production', 'Dissipation', 'Balance', 'x=3', 'x=1', ''], \
+        'a split legend: a column of terms by colour, a column of locations by line style'

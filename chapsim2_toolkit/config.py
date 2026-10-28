@@ -94,6 +94,11 @@ spectrum_components = 'u' # any of u/v/w, e.g. 'u' or 'u,v,w'
 # Reynolds Stress Budget terms
 re_stress_budget_on = False
 re_stress_component = 'uu11' # 'total' or 'uu11', 'uu12' etc. for individual components
+re_stress_budget_terms = [] # terms to plot, e.g. ['dissipation', 'joule'] (empty = all but the combined ones): production,
+# dissipation, mean_convection, viscous_diffusion, pressure_transport, turbulent_diffusion, pressure_strain,
+# pressure (combined: transport + strain), buoyancy (thermal), joule and electric_potential (MHD: the two parts of the
+# Lorentz term), lorentz (combined: joule + electric_potential), balance (sum of the selected terms; a selected
+# combined term replaces its parts in the sum)
 
 # thermo statistics
 heat_transf_coeff_on = False # x profile only
@@ -119,7 +124,10 @@ display_fig = False
 save_fig = True
 save_to_path = True # legacy: also write into folder_path. Prefer output_dir below.
 output_dir = '' # where figures are written; blank = turb_stats_plots/ beside the toolkit
-large_text_on = False # Increase axes, label, title and legend font sizes for readability
+large_text_on = True # Increase axes, label, title and legend font sizes for readability
+grid_on = True # grid lines on the axes
+line_markers_on = False # markers on profile lines (they tell cases apart)
+line_width = 1.5 # width of the data lines, in points
 plot_name = '' # name for saved plot files, leave blank for default naming
 
 # reference data options

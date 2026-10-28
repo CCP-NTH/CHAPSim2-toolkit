@@ -324,7 +324,8 @@ def test_body_forces_accept_a_two_dimensional_plane():
     data = {'pr': np.random.rand(ny, nx), 'f': np.ones((ny, nx)),
             'j1': np.zeros((ny, nx)), 'j2': np.zeros((ny, nx)),
             'j3': np.zeros((ny, nx))}
-    comp = op.compute_force_components(data, y, average_z=False, average_x=False)
+    comp = op.compute_force_components(data, y, average_z=False, average_x=False,
+                                       x_coords=np.linspace(0.0, 3.0, nx))
     assert comp['pr_grad'][0].shape == (ny, nx)      # d/dx
     assert comp['pr_grad'][1].shape == (ny, nx)      # d/dy
     assert np.all(comp['pr_grad'][2] == 0.0)         # z averaged away
@@ -334,7 +335,8 @@ def test_body_forces_still_accept_a_three_dimensional_field():
     nz, ny, nx = 4, 8, 6
     y = np.linspace(-1.0, 1.0, ny)
     data = {'pr': np.random.rand(nz, ny, nx), 'f': np.ones((nz, ny, nx))}
-    comp = op.compute_force_components(data, y, average_z=False, average_x=False)
+    comp = op.compute_force_components(data, y, average_z=False, average_x=False,
+                                       x_coords=np.linspace(0.0, 3.0, nx), z_coords=np.linspace(0.0, 2.0, nz))
     assert all(g.shape == (nz, ny, nx) for g in comp['pr_grad'])
 
 

@@ -95,7 +95,7 @@ def test_a_case_with_no_input_file_leaves_the_configuration_alone():
         config = _config(cases=['runA'], Re=None, geometry=None)
         config, said = _apply(config, tmp)
         assert config.Re is None and config.geometry is None
-        assert config.thermo_on is False and config.mhd_on is False
+        assert not config.thermo_on and not config.mhd_on
         assert said == ''
 
 

@@ -30,6 +30,8 @@ Thumbs.db
 # Code Testing
 Tests/
 turb_stats_plots/
+config.py
+
 # build artefacts
 dist/
 build/

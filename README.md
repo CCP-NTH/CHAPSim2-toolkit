@@ -99,12 +99,12 @@ pip install -r requirements.txt       # just the dependencies, no install
 conda env create -f environment.yml   # installation using conda
 ```
 
-**Requirements.** Main scripts need only NumPy and Matplotlib, and run on
-Python 3.8 or newer. Optional dependencies are used by one part only:
+**Requirements.** Python 3.10 or newer. Main scripts need only NumPy and
+Matplotlib. Optional dependencies are used by one part only:
 
 | Package | Needed by |
 |---|---|
-| `ttkbootstrap` ≥ 2 | the GUI, which therefore needs **Python 3.10+** (on ttkbootstrap 1 the main window cannot be built at all) |
+| `ttkbootstrap` ≥ 2 | the GUI (on ttkbootstrap 1 the main window cannot be built at all) |
 | `pyvista` | 3D visualisation |
 | `pandas` | `thermal_BC_calc.py` |
 

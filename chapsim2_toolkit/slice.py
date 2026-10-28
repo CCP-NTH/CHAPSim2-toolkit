@@ -311,7 +311,7 @@ VARIABLE_LABELS = {
     'u3': r"Time-averaged Spanwise Velocity",
     # --- Pressure / density / enthalpy ---
     'pressure': r"Pressure",
-    'pr': r"Time-averaged Pressure",
+    'pr': r"Pressure",
     'Density': r"Density",
     'f': r"Density",
     'Enthalpy': r"Enthalpy",
@@ -344,7 +344,7 @@ COLORBAR_LABELS = {
     'u3': r"$U_z$",
     # --- Pressure / density / enthalpy ---
     'pressure': r"$p$",
-    'pr': r"$\langle p \rangle$",
+    'pr': r"$p$",
     'Density': r"$\rho$",
     'f': r"$\rho$",
     'Enthalpy': r"$h$",
@@ -384,7 +384,13 @@ def variable_label(variable_name):
 
     Falls back to the raw variable name if not found in VARIABLE_LABELS.
     """
-    return VARIABLE_LABELS.get(_base_variable_name(variable_name), variable_name)
+    name = str(variable_name)
+    if _base_variable_name(name) == 'pr':     # instantaneous and averaged files both call it pr
+        if name.endswith("'"):
+            return "Pressure Fluctuation"
+        if name.startswith(_LABEL_PREFIXES):
+            return "Time-averaged Pressure"
+    return VARIABLE_LABELS.get(_base_variable_name(name), variable_name)
 
 
 def variable_colorbar_label(variable_name):
@@ -393,7 +399,13 @@ def variable_colorbar_label(variable_name):
     Uses COLORBAR_LABELS, falling back to VARIABLE_LABELS and then to the raw
     variable name.
     """
-    base = _base_variable_name(variable_name)
+    name = str(variable_name)
+    base = _base_variable_name(name)
+    if base == 'pr':
+        if name.endswith("'"):
+            return r"$p'$"
+        if name.startswith(_LABEL_PREFIXES):
+            return r"$\langle p \rangle$"
     if base in COLORBAR_LABELS:
         return COLORBAR_LABELS[base]
     return VARIABLE_LABELS.get(base, variable_name)
